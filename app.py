@@ -3,13 +3,25 @@ import sys
 import os
 import asyncio
 from datetime import datetime
+import json
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # Add the current directory to the Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# Import SIGMA platform components
 from api.rag_engine import rag_engine
 from api.langchain_agents import create_ghana_business_agent
 from api.scoring_engine import create_scoring_engine
+from api.business_model_copilot import create_business_model_copilot
+from api.growth_recommender import create_growth_recommender
+from api.credit_underwriting import create_credit_underwriting_engine
+from api.merl_analytics import create_merl_analytics_engine
+from api.mcp_patterns import create_task_orchestrator
+from api.streaming_interfaces import create_streaming_interface_manager
 from knowledge_base.funding_database import funding_db
 from knowledge_base.regulatory_info import regulatory_db
 from config.settings import settings
@@ -20,20 +32,49 @@ from typing import List, Dict, Any
 # Page configuration
 st.set_page_config(
     page_title=settings.APP_TITLE,
-    page_icon="🌍",
+    page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Enhanced Custom CSS for SIGMA Platform
 st.markdown("""
 <style>
     .main-header {
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 2rem;
-        border-radius: 10px;
+        border-radius: 15px;
         color: white;
         margin-bottom: 2rem;
+        box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+    }
+    
+    .sigma-card {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border-radius: 15px;
+        padding: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        margin: 1rem 0;
+        box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+    }
+    
+    .feature-card {
+        background: linear-gradient(145deg, #f0f2f6, #ffffff);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        border-left: 4px solid #667eea;
+    }
+    
+    .metric-card {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border-radius: 10px;
+        padding: 1rem;
+        color: white;
+        text-align: center;
+        margin: 0.5rem 0;
     }
     
     .chat-message {
@@ -52,46 +93,38 @@ st.markdown("""
         border-left: 4px solid #9c27b0;
     }
     
-    .source-box {
-        background-color: #f5f5f5;
-        padding: 1rem;
-        border-radius: 5px;
-        border-left: 4px solid #4caf50;
-        margin: 0.5rem 0;
-    }
-    
-    .follow-up-button {
-        background-color: #ffffff;
-        border: 1px solid #ddd;
-        padding: 0.5rem 1rem;
+    .tool-badge {
+        display: inline-block;
+        background: #667eea;
+        color: white;
+        padding: 0.3rem 0.8rem;
         border-radius: 20px;
-        margin: 0.25rem;
-        cursor: pointer;
-        transition: all 0.3s ease;
+        font-size: 0.8rem;
+        margin: 0.2rem;
     }
     
-    .follow-up-button:hover {
-        background-color: #f0f0f0;
-        border-color: #2196f3;
+    .status-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 8px;
     }
     
-    .stats-container {
-        display: flex;
-        justify-content: space-around;
-        margin: 1rem 0;
-    }
+    .status-active { background-color: #4CAF50; }
+    .status-inactive { background-color: #f44336; }
+    .status-warning { background-color: #ff9800; }
     
-    .stat-box {
-        text-align: center;
+    .sidebar-section {
+        background: rgba(255, 255, 255, 0.05);
         padding: 1rem;
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-radius: 10px;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
+# Initialize session state for SIGMA platform
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -101,449 +134,254 @@ if "conversation_history" not in st.session_state:
 if "user_context" not in st.session_state:
     st.session_state.user_context = {}
 
-if "agent_mode" not in st.session_state:
-    st.session_state.agent_mode = False
+if "sigma_mode" not in st.session_state:
+    st.session_state.sigma_mode = "comprehensive"
 
-if "scoring_engines" not in st.session_state:
-    st.session_state.scoring_engines = create_scoring_engine()
+if "active_workflow" not in st.session_state:
+    st.session_state.active_workflow = None
 
-if "ghana_agent" not in st.session_state:
-    st.session_state.ghana_agent = create_ghana_business_agent()
+# Initialize SIGMA platform components
+@st.cache_resource
+def initialize_sigma_platform():
+    """Initialize all SIGMA platform components"""
+    
+    components = {}
+    
+    try:
+        # Core components
+        components['rag_engine'] = rag_engine
+        components['scoring_engines'] = create_scoring_engine()
+        components['ghana_agent'] = create_ghana_business_agent()
+        
+        # SIGMA-specific components
+        if settings.ENABLE_BUSINESS_MODEL_COPILOT:
+            components['business_model_copilot'] = create_business_model_copilot()
+        
+        if settings.ENABLE_GROWTH_RECOMMENDER:
+            components['growth_recommender'] = create_growth_recommender()
+        
+        if settings.ENABLE_CREDIT_UNDERWRITING:
+            components['credit_engine'] = create_credit_underwriting_engine()
+        
+        if settings.ENABLE_MERL_ANALYTICS:
+            components['merl_engine'] = create_merl_analytics_engine()
+        
+        if settings.ENABLE_MCP_PATTERNS:
+            components['task_orchestrator'] = create_task_orchestrator()
+        
+        components['streaming_manager'] = create_streaming_interface_manager()
+        
+        return components
+        
+    except Exception as e:
+        st.error(f"Error initializing SIGMA platform: {e}")
+        return {}
+
+# Load SIGMA components
+sigma_components = initialize_sigma_platform()
 
 def main():
-    # Header
-    st.markdown("""
+    # SIGMA Platform Header
+    st.markdown(f"""
     <div class="main-header">
-        <h1>UbuntuAI</h1>
-        <p>Your AI-powered guide to African entrepreneurship and business opportunities</p>
+        <h1>🚀 {settings.APP_TITLE}</h1>
+        <p>{settings.APP_DESCRIPTION}</p>
+        <p><strong>Powered by AI • Built for Africa • Focused on Impact</strong></p>
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar
+    # Enhanced Sidebar
     with st.sidebar:
-        st.header("Settings")
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.header("🎛️ SIGMA Control Panel")
         
-        # Agent mode toggle
-        st.subheader("AI Mode")
-        agent_mode = st.toggle(
-            "Advanced Agent Mode",
-            value=st.session_state.agent_mode,
-            help="Enable multi-step agent workflows with tools"
+        # Platform status indicators
+        st.subheader("Platform Status")
+        display_platform_status()
+        
+        st.divider()
+        
+        # SIGMA mode selection
+        st.subheader("AI Mode Selection")
+        sigma_mode = st.selectbox(
+            "Choose AI Mode:",
+            ["comprehensive", "business_model", "credit_assessment", "growth_strategy", "impact_measurement"],
+            index=0,
+            help="Select the SIGMA AI mode for specialized assistance"
         )
-        st.session_state.agent_mode = agent_mode
-        
-        if agent_mode:
-            st.info("Agent mode: Uses advanced workflows with multiple tools")
-        else:
-            st.info("Chat mode: Direct Q&A with knowledge base")
+        st.session_state.sigma_mode = sigma_mode
         
         st.divider()
         
         # User context settings
-        st.subheader("Your Context")
-        user_country = st.selectbox(
-            "Your Country/Region of Interest:",
-            [""] + settings.AFRICAN_COUNTRIES,
-            help="This helps personalize responses to your region"
-        )
-        
-        # Enhanced sector selection
-        user_sector = st.selectbox(
-            "Your Business Sector:",
-            [""] + settings.BUSINESS_SECTORS,
-            help="Your area of business focus"
-        )
-        
-        business_stage = st.selectbox(
-            "Business Stage:",
-            ["", "Idea Stage", "Early Stage", "Growth Stage", "Established"],
-            help="Your current business development stage"
-        )
-        
-        # Ghana-specific location if Ghana is selected
-        ghana_location = None
-        if user_country == "Ghana":
-            ghana_location = st.selectbox(
-                "Ghana Location:",
-                [""] + settings.GHANA_MAJOR_CITIES,
-                help="Your specific location in Ghana"
-            )
-        
-        # Update user context
-        st.session_state.user_context = {
-            "country": user_country if user_country else None,
-            "sector": user_sector if user_sector else None,
-            "business_stage": business_stage if business_stage else None,
-            "ghana_location": ghana_location if ghana_location else None
-        }
+        st.subheader("Your Profile")
+        user_profile = collect_user_profile()
+        st.session_state.user_context.update(user_profile)
         
         st.divider()
         
         # Quick actions
-        st.subheader("Quick Access")
-        
-        if st.button("Business Assessment", use_container_width=True):
-            st.session_state.current_page = "assessment"
-            st.rerun()
-        
-        if st.button("Browse Funding Database", use_container_width=True):
-            st.session_state.current_page = "funding"
-            st.rerun()
-        
-        if st.button("Regulatory Guide", use_container_width=True):
-            st.session_state.current_page = "regulatory"
-            st.rerun()
-        
-        if st.button("Agent Workflows", use_container_width=True):
-            st.session_state.current_page = "workflows"
-            st.rerun()
-        
-        if st.button("Reset Chat", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.conversation_history = []
-            st.rerun()
+        st.subheader("Quick Actions")
+        display_quick_actions()
         
         st.divider()
         
-        # System stats
-        st.subheader("System Info")
-        try:
-            from api.vector_store import vector_store
-            stats = vector_store.get_collection_stats()
-            st.metric("Knowledge Base Size", f"{stats.get('total_documents', 0)} documents")
-            
-            if agent_mode:
-                st.metric("Agent Tools", "5 active")
-                st.metric("Scoring Models", "2 available")
-        except:
-            st.metric("Knowledge Base Size", "Loading...")
+        # Platform analytics
+        st.subheader("Platform Analytics")
+        display_platform_metrics()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # Main content area
-    current_page = getattr(st.session_state, 'current_page', 'chat')
+    # Main content area - tabbed interface
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "💬 AI Assistant", 
+        "🏢 Business Tools", 
+        "💰 Financing", 
+        "📊 Impact Dashboard", 
+        "🔧 Platform Tools"
+    ])
     
-    if current_page == 'assessment':
-        show_assessment_page()
-    elif current_page == 'funding':
-        show_funding_page()
-    elif current_page == 'regulatory':
-        show_regulatory_page()
-    elif current_page == 'workflows':
-        show_workflows_page()
-    else:
-        show_chat_page()
+    with tab1:
+        show_ai_assistant()
+    
+    with tab2:
+        show_business_tools()
+    
+    with tab3:
+        show_financing_tools()
+    
+    with tab4:
+        show_impact_dashboard()
+    
+    with tab5:
+        show_platform_tools()
 
-def show_assessment_page():
-    st.header("Business Assessment Tool")
+def display_platform_status():
+    """Display real-time platform status"""
     
-    col1, col2 = st.columns([1, 1])
+    # Check component status
+    components_status = {
+        "RAG Engine": "rag_engine" in sigma_components,
+        "Business Model Copilot": settings.ENABLE_BUSINESS_MODEL_COPILOT and "business_model_copilot" in sigma_components,
+        "Growth Recommender": settings.ENABLE_GROWTH_RECOMMENDER and "growth_recommender" in sigma_components,
+        "Credit Engine": settings.ENABLE_CREDIT_UNDERWRITING and "credit_engine" in sigma_components,
+        "MERL Analytics": settings.ENABLE_MERL_ANALYTICS and "merl_engine" in sigma_components,
+        "Streaming Interfaces": "streaming_manager" in sigma_components
+    }
     
-    with col1:
-        st.subheader("Business Information")
-        
-        with st.form("business_assessment_form"):
-            business_description = st.text_area(
-                "Business Description",
-                placeholder="Describe your business in 2-3 sentences...",
-                height=100
-            )
-            
-            sector = st.selectbox(
-                "Business Sector",
-                settings.BUSINESS_SECTORS,
-                help="Select your primary business sector"
-            )
-            
-            team_size = st.slider(
-                "Team Size",
-                min_value=1,
-                max_value=20,
-                value=1,
-                help="Total number of team members including yourself"
-            )
-            
-            stage = st.selectbox(
-                "Business Stage",
-                ["Idea", "Early", "Growing", "Established"],
-                help="Current stage of your business"
-            )
-            
-            location = st.selectbox(
-                "Business Location",
-                settings.GHANA_MAJOR_CITIES if st.session_state.user_context.get('country') == 'Ghana' else settings.AFRICAN_COUNTRIES,
-                help="Where is your business based?"
-            )
-            
-            # Additional assessment fields
-            st.subheader("Business Details")
-            
-            col1_inner, col2_inner = st.columns(2)
-            
-            with col1_inner:
-                generating_revenue = st.checkbox("Currently generating revenue")
-                has_customers = st.checkbox("Have paying customers")
-                mobile_first = st.checkbox("Mobile-first approach")
-                
-            with col2_inner:
-                local_team = st.checkbox("Local team members")
-                market_research = st.checkbox("Conducted market research")
-                has_funding = st.checkbox("Previously received funding")
-            
-            submitted = st.form_submit_button("Assess My Business", use_container_width=True)
-    
-    with col2:
-        st.subheader("Assessment Results")
-        
-        if submitted and business_description and sector:
-            with st.spinner("Analyzing your business..."):
-                # Prepare data for scoring
-                assessment_data = {
-                    'business_description': business_description,
-                    'sector': sector.lower(),
-                    'team_size': team_size,
-                    'product_stage': map_stage_to_product_stage(stage),
-                    'generating_revenue': generating_revenue,
-                    'customer_count': 100 if has_customers else 0,
-                    'mobile_first': mobile_first,
-                    'local_team_members': local_team,
-                    'market_research_done': market_research,
-                    'funding_status': 'pre_seed' if has_funding else 'none',
-                    'local_market_knowledge': True,  # Assume true for local businesses
-                }
-                
-                # Get assessment from scoring engine
-                scorer = st.session_state.scoring_engines['startup_scorer']
-                result = scorer.score_startup(assessment_data)
-                
-                # Display results
-                display_assessment_results(result)
-        
-        elif submitted:
-            st.warning("Please fill in the business description and sector to get an assessment.")
-        else:
-            st.info("Fill out the form on the left to get a comprehensive business assessment.")
-    
-    if st.button("Back to Chat", use_container_width=True):
-        st.session_state.current_page = "chat"
-        st.rerun()
+    for component, status in components_status.items():
+        status_class = "status-active" if status else "status-inactive"
+        st.markdown(
+            f'<span class="status-indicator {status_class}"></span>{component}',
+            unsafe_allow_html=True
+        )
 
-def display_assessment_results(result):
-    """Display comprehensive assessment results"""
+def collect_user_profile():
+    """Collect user profile information"""
     
-    # Overall score with color coding
-    score_color = "HIGH" if result.overall_score > 0.7 else "MEDIUM" if result.overall_score > 0.5 else "LOW"
+    profile = {}
     
-    st.metric(
-        f"{score_color} Overall Readiness Score",
-        f"{result.overall_score:.2f}/1.0",
-        delta=f"Confidence: {result.confidence:.2f}"
+    # Country selection with SIGMA priority
+    country_options = settings.SIGMA_PRIORITY_COUNTRIES + [
+        c for c in settings.AFRICAN_COUNTRIES if c not in settings.SIGMA_PRIORITY_COUNTRIES
+    ]
+    
+    profile["country"] = st.selectbox(
+        "Country/Region:",
+        [""] + country_options,
+        help="Your primary business location"
     )
     
-    # Component scores
-    st.subheader("Detailed Breakdown")
+    # Enhanced sector selection
+    profile["sector"] = st.selectbox(
+        "Business Sector:",
+        [""] + settings.BUSINESS_SECTORS,
+        help="Your primary business sector"
+    )
     
-    for component, score in result.component_scores.items():
-        component_name = component.replace('_', ' ').title()
-        status = "HIGH" if score > 0.7 else "MEDIUM" if score > 0.5 else "LOW"
-        
-        col1, col2, col3 = st.columns([3, 1, 1])
-        with col1:
-            st.write(f"**{component_name}** ({status})")
-        with col2:
-            st.write(f"{score:.2f}")
-        with col3:
-            st.progress(score)
+    # Business stage with SIGMA focus
+    profile["business_stage"] = st.selectbox(
+        "Business Stage:",
+        ["", "Idea Stage", "Early Stage (MVP)", "Growth Stage", "Scaling", "Established"],
+        help="Current stage of your business"
+    )
     
-    # Risk factors
-    if result.risk_factors:
-        st.subheader("Risk Factors")
-        for risk in result.risk_factors:
-            st.warning(f"• {risk}")
+    # SIGMA target user identification
+    profile["user_type"] = st.multiselect(
+        "Business Characteristics:",
+        ["Women-led", "Informal Enterprise", "Small Agribusiness", "Tech-enabled", "Export-oriented"],
+        help="Select characteristics that apply to your business"
+    )
     
-    # Recommendations
-    if result.recommendations:
-        st.subheader("Recommendations")
-        for i, rec in enumerate(result.recommendations, 1):
-            st.success(f"{i}. {rec}")
+    # Funding status
+    profile["funding_stage"] = st.selectbox(
+        "Funding Status:",
+        [""] + settings.FUNDING_STAGES,
+        help="Current funding stage or type needed"
+    )
     
-    # Ghana-specific insights if applicable
-    st.subheader("Ghana Market Insights")
-    st.info("""
-    **Key Considerations for Ghana:**
-    • Focus on mobile-first solutions (95%+ mobile penetration)
-    • Consider Mobile Money integration for payments
-    • Build trust through local partnerships
-    • Adapt to seasonal business cycles
-    • Leverage strong community networks
-    """)
+    return {k: v for k, v in profile.items() if v}
 
-def show_workflows_page():
-    st.header("Agent Workflows")
+def display_quick_actions():
+    """Display quick action buttons"""
     
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Available Workflows")
-        
-        workflows = st.session_state.ghana_agent.get_available_workflows()
-        
-        selected_workflow = st.selectbox(
-            "Choose a workflow:",
-            options=[w['name'] for w in workflows],
-            help="Select an agent workflow to run"
-        )
-        
-        # Show workflow details
-        selected_details = next(w for w in workflows if w['name'] == selected_workflow)
-        
-        st.info(f"**Description:** {selected_details['description']}")
-        st.caption(f"**Triggers:** {selected_details['trigger']}")
-        
-        # Workflow input
-        workflow_query = st.text_area(
-            "Workflow Input",
-            placeholder="Describe what you need help with...",
-            help="Provide context for the agent workflow"
-        )
-        
-        run_workflow = st.button("Run Workflow", use_container_width=True)
-        
-        st.divider()
-        
-        # Quick workflow buttons
-        st.subheader("Quick Actions")
-        
-        if st.button("Assess Fintech Startup", use_container_width=True):
-            st.session_state.workflow_query = "I have a fintech startup in Accra with mobile payments. Please assess my business readiness and provide recommendations."
-            st.session_state.auto_run = True
+        if st.button("🎯 Business Assessment", use_container_width=True):
+            st.session_state.active_page = "business_assessment"
             st.rerun()
         
-        if st.button("Find Agritech Funding", use_container_width=True):
-            st.session_state.workflow_query = "Find funding opportunities for my agritech startup in Ghana that helps farmers with crop monitoring."
-            st.session_state.auto_run = True
-            st.rerun()
-        
-        if st.button("Ghana Business Registration", use_container_width=True):
-            st.session_state.workflow_query = "Help me understand the complete process for registering a technology company in Ghana including taxes."
-            st.session_state.auto_run = True
+        if st.button("💰 Credit Check", use_container_width=True):
+            st.session_state.active_page = "credit_assessment"
             st.rerun()
     
     with col2:
-        st.subheader("Workflow Results")
+        if st.button("📈 Growth Plan", use_container_width=True):
+            st.session_state.active_page = "growth_planning"
+            st.rerun()
         
-        # Check for auto-run workflows
-        auto_run = getattr(st.session_state, 'auto_run', False)
-        auto_query = getattr(st.session_state, 'workflow_query', '')
-        
-        if auto_run:
-            workflow_query = auto_query
-            run_workflow = True
-            st.session_state.auto_run = False
-            st.session_state.workflow_query = ''
-        
-        if run_workflow and workflow_query:
-            with st.spinner("Running agent workflow..."):
-                try:
-                    # Add user context to the query
-                    user_context = st.session_state.user_context
-                    
-                    # Run the agent workflow
-                    result = st.session_state.ghana_agent.process_query_sync(
-                        workflow_query, 
-                        user_context
-                    )
-                    
-                    if result['success']:
-                        # Display the response
-                        st.markdown("### Agent Response")
-                        st.markdown(result['answer'])
-                        
-                        # Show tools used
-                        if result['tools_used']:
-                            st.markdown("### Tools Used")
-                            for tool in result['tools_used']:
-                                st.badge(tool.replace('_', ' ').title())
-                        
-                        # Show actions taken
-                        if result['actions_taken']:
-                            with st.expander("Detailed Actions"):
-                                for i, action in enumerate(result['actions_taken'], 1):
-                                    st.markdown(f"**{i}. {action['tool']}**")
-                                    st.code(str(action['input']), language="json")
-                                    st.caption(f"Timestamp: {action['timestamp']}")
-                    else:
-                        st.error(f"Workflow failed: {result['answer']}")
-                        
-                except Exception as e:
-                    st.error(f"Error running workflow: {str(e)}")
-        
-        elif run_workflow:
-            st.warning("Please provide input for the workflow.")
-        
-        else:
-            st.info("Select a workflow and provide input to see results here.")
-            
-            # Show example workflows
-            st.markdown("### Example Workflows")
-            
-            examples = [
-                {
-                    "title": "Business Assessment",
-                    "query": "Assess my edtech startup in Kumasi with 3 team members focusing on rural education"
-                },
-                {
-                    "title": "Funding Search", 
-                    "query": "Find Series A funding for my healthtech startup serving rural communities"
-                },
-                {
-                    "title": "Market Research",
-                    "query": "Research the e-commerce market in Northern Ghana for agricultural products"
-                },
-                {
-                    "title": "Impact Measurement",
-                    "query": "Create impact tracking framework for my social enterprise helping women farmers"
-                }
-            ]
-            
-            for example in examples:
-                with st.expander(f"{example['title']}"):
-                    st.code(example['query'])
-    
-    if st.button("Back to Chat", use_container_width=True):
-        st.session_state.current_page = "chat"
-        st.rerun()
+        if st.button("📊 Impact Report", use_container_width=True):
+            st.session_state.active_page = "impact_measurement"
+            st.rerun()
 
-def show_chat_page():
-    st.header("Ask UbuntuAI Anything")
+def display_platform_metrics():
+    """Display key platform metrics"""
+    
+    try:
+        # Simulated metrics (in production, these would come from actual usage data)
+        metrics = {
+            "Active Users": 1247,
+            "Businesses Assessed": 892,
+            "Credit Applications": 234,
+            "Impact Score Avg": 7.8
+        }
+        
+        for metric, value in metrics.items():
+            st.metric(metric, value)
+            
+    except Exception as e:
+        st.error(f"Error loading metrics: {e}")
+
+def show_ai_assistant():
+    """Main AI assistant interface"""
+    
+    st.header("🤖 SIGMA AI Assistant")
     
     # Mode indicator
-    mode_color = "ACTIVE" if st.session_state.agent_mode else "STANDARD"
-    mode_text = "Advanced Agent Mode" if st.session_state.agent_mode else "Chat Mode"
-    st.info(f"**{mode_text}** ({mode_color}) - {get_mode_description()}")
+    mode_descriptions = {
+        "comprehensive": "Full SIGMA platform capabilities with all tools",
+        "business_model": "Specialized business model design and optimization",
+        "credit_assessment": "Credit scoring and loan recommendation focus",
+        "growth_strategy": "Growth planning and strategy development",
+        "impact_measurement": "Impact measurement and MERL analytics"
+    }
     
-    # Quick start suggestions
+    st.info(f"**Current Mode:** {st.session_state.sigma_mode.title()} - {mode_descriptions[st.session_state.sigma_mode]}")
+    
+    # Quick start suggestions based on mode
     if not st.session_state.messages:
-        st.subheader("Popular Questions")
-        
-        # Enhanced suggestions based on mode
-        if st.session_state.agent_mode:
-            suggestions = [
-                "Assess my fintech startup readiness in Ghana",
-                "Find funding for my agritech business serving farmers",
-                "Create impact measurement framework for my social enterprise",
-                "Research the healthtech market in West Africa",
-                "Help me register a tech company in Ghana with tax optimization",
-                "Design a business model for rural e-commerce in Ghana"
-            ]
-        else:
-            suggestions = prompt_templates.get_conversation_starter_prompts()
-        
-        cols = st.columns(2)
-        
-        for i, suggestion in enumerate(suggestions[:6]):
-            col = cols[i % 2]
-            with col:
-                if st.button(suggestion, key=f"suggestion_{i}", use_container_width=True):
-                    process_user_input(suggestion)
+        show_mode_specific_suggestions()
     
     # Display chat messages
     for message in st.session_state.messages:
@@ -551,153 +389,101 @@ def show_chat_page():
             if message["role"] == "assistant":
                 st.markdown(message["content"])
                 
-                # Enhanced assistant message display
-                if message.get("agent_mode"):
-                    # Agent mode specific display
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        if message.get("tools_used"):
-                            st.metric("Tools Used", len(message["tools_used"]))
-                    
-                    with col2:
-                        if message.get("actions_taken"):
-                            st.metric("Actions", message["actions_taken"])
-                    
-                    with col3:
-                        st.metric("Mode", "Agent")
-                    
-                    # Show tools used
-                    if message.get("tools_used"):
-                        with st.expander("Agent Tools"):
-                            for tool in message["tools_used"]:
-                                st.badge(tool.replace('_', ' ').title())
+                # Show SIGMA-specific enhancements
+                if message.get("sigma_enhanced"):
+                    show_sigma_message_enhancements(message)
                 
-                else:
-                    # Regular mode display
-                    # Show sources if available
-                    if "sources" in message and message["sources"]:
-                        with st.expander(f"Sources ({len(message['sources'])})"):
-                            for i, source in enumerate(message["sources"]):
-                                st.markdown(f"""
-                                <div class="source-box">
-                                    <strong>Source {i+1}</strong> (Similarity: {source.get('similarity', 'N/A')})<br>
-                                    {source['content_preview']}
-                                    <br><small>{source.get('metadata', {})}</small>
-                                </div>
-                                """, unsafe_allow_html=True)
-                    
-                    # Show confidence and follow-ups
-                    if "confidence" in message:
-                        confidence = message["confidence"]
-                        if confidence < 0.6:
-                            st.warning(f"Confidence: {confidence:.2f} - Consider enabling Agent Mode for better results")
-                    
-                    # Show follow-up questions
-                    if "follow_ups" in message and message["follow_ups"]:
-                        st.markdown("**You might also ask:**")
-                        for j, follow_up in enumerate(message["follow_ups"]):
-                            if st.button(follow_up, key=f"followup_{len(st.session_state.messages)}_{j}"):
-                                process_user_input(follow_up)
             else:
                 st.markdown(message["content"])
     
     # Chat input
     if prompt := st.chat_input(settings.CHAT_PLACEHOLDER):
-        process_user_input(prompt)
+        process_sigma_input(prompt)
 
-def get_mode_description():
-    """Get description of current mode"""
-    if st.session_state.agent_mode:
-        return "Uses multi-step workflows with business assessment, funding search, and regulatory tools"
-    else:
-        return "Direct Q&A with African business knowledge base"
+def show_mode_specific_suggestions():
+    """Show suggestions based on current SIGMA mode"""
+    
+    st.subheader("💡 Mode-Specific Suggestions")
+    
+    suggestions = {
+        "comprehensive": [
+            "Assess my agritech startup readiness and recommend next steps",
+            "Design a business model for rural fintech services in Ghana",
+            "Create a complete growth strategy with financing recommendations",
+            "Build an impact measurement framework for my social enterprise"
+        ],
+        "business_model": [
+            "Design a business model for mobile money services in rural areas",
+            "Optimize my e-commerce platform for African markets",
+            "Create a subscription model for agricultural advisory services",
+            "Develop a marketplace model for women entrepreneurs"
+        ],
+        "credit_assessment": [
+            "Assess my creditworthiness for a $50,000 business loan",
+            "Evaluate loan risk for a women-led agribusiness",
+            "Recommend optimal loan terms for seasonal farming business",
+            "Analyze alternative data for informal enterprise credit scoring"
+        ],
+        "growth_strategy": [
+            "Create a growth plan for scaling my fintech startup",
+            "Recommend expansion strategies for my agritech platform",
+            "Develop customer acquisition strategy for rural markets",
+            "Design operational scaling plan for my business"
+        ],
+        "impact_measurement": [
+            "Create impact measurement framework for farmer income improvement",
+            "Design MERL system for women empowerment program",
+            "Calculate social return on investment for my social enterprise",
+            "Build beneficiary feedback collection system"
+        ]
+    }
+    
+    mode_suggestions = suggestions.get(st.session_state.sigma_mode, suggestions["comprehensive"])
+    
+    cols = st.columns(2)
+    for i, suggestion in enumerate(mode_suggestions):
+        col = cols[i % 2]
+        with col:
+            if st.button(suggestion, key=f"suggestion_{i}", use_container_width=True):
+                process_sigma_input(suggestion)
 
-def process_user_input(user_input: str):
-    # Add user message to chat history
+def process_sigma_input(user_input: str):
+    """Process user input through SIGMA platform"""
+    
+    # Add user message
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.session_state.conversation_history.append({"role": "user", "content": user_input})
     
     with st.chat_message("user"):
         st.markdown(user_input)
     
-    # Generate response based on mode
+    # Generate SIGMA response
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
+        with st.spinner("SIGMA is thinking..."):
             try:
-                if st.session_state.agent_mode:
-                    # Use advanced agent workflow
-                    agent_result = st.session_state.ghana_agent.process_query_sync(
-                        user_input,
-                        user_context=st.session_state.user_context
-                    )
-                    
-                    if agent_result['success']:
-                        answer = agent_result['answer']
-                        
-                        # Display answer
-                        st.markdown(answer)
-                        
-                        # Show agent insights
-                        if agent_result['tools_used']:
-                            with st.expander(f"Agent Tools Used ({len(agent_result['tools_used'])})"):
-                                for tool in agent_result['tools_used']:
-                                    st.badge(tool.replace('_', ' ').title())
-                        
-                        # Store agent response
-                        assistant_message = {
-                            "role": "assistant",
-                            "content": answer,
-                            "agent_mode": True,
-                            "tools_used": agent_result['tools_used'],
-                            "actions_taken": len(agent_result['actions_taken'])
-                        }
-                        
-                    else:
-                        # Fallback to regular RAG if agent fails
-                        st.warning("Agent workflow failed, falling back to regular mode...")
-                        answer = agent_result['answer']
-                        st.markdown(answer)
-                        
-                        assistant_message = {
-                            "role": "assistant",
-                            "content": answer,
-                            "agent_mode": False,
-                            "error": True
-                        }
+                response = generate_sigma_response(user_input)
                 
-                else:
-                    # Use regular RAG engine
-                    response = rag_engine.query(
-                        question=user_input,
-                        conversation_history=st.session_state.conversation_history,
-                        user_context=st.session_state.user_context
-                    )
-                    
-                    answer = response.get("answer", "I'm sorry, I couldn't generate a response.")
-                    sources = response.get("sources", [])
-                    follow_ups = response.get("follow_up_questions", [])
-                    confidence = response.get("confidence", 0.0)
-                    
-                    # Display answer
-                    st.markdown(answer)
-                    
-                    # Display confidence if low
-                    if confidence < 0.5:
-                        st.warning(f"Low confidence response ({confidence:.2f}). Consider using Agent Mode for better results.")
-                    
-                    # Store regular response
-                    assistant_message = {
-                        "role": "assistant", 
-                        "content": answer,
-                        "sources": sources,
-                        "follow_ups": follow_ups,
-                        "confidence": confidence,
-                        "agent_mode": False
-                    }
+                # Display response
+                st.markdown(response["content"])
                 
-                st.session_state.messages.append(assistant_message)
-                st.session_state.conversation_history.append({"role": "assistant", "content": answer})
+                # Store response
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response["content"],
+                    "sigma_enhanced": True,
+                    "mode": st.session_state.sigma_mode,
+                    "tools_used": response.get("tools_used", []),
+                    "confidence": response.get("confidence", 0.0),
+                    "processing_time": response.get("processing_time", 0.0)
+                })
+                
+                st.session_state.conversation_history.append({
+                    "role": "assistant", 
+                    "content": response["content"]
+                })
+                
+                # Show SIGMA enhancements
+                show_sigma_response_enhancements(response)
                 
             except Exception as e:
                 error_msg = f"I apologize, but I encountered an error: {str(e)}"
@@ -706,177 +492,459 @@ def process_user_input(user_input: str):
     
     st.rerun()
 
-def show_funding_page():
-    st.header("African Funding Database")
+def generate_sigma_response(user_input: str) -> Dict[str, Any]:
+    """Generate response using SIGMA platform capabilities"""
     
-    col1, col2 = st.columns([1, 2])
+    start_time = time.time()
     
-    with col1:
-        st.subheader("Search Filters")
+    try:
+        mode = st.session_state.sigma_mode
+        user_context = st.session_state.user_context
         
-        search_country = st.selectbox(
-            "Country:",
-            ["All"] + settings.AFRICAN_COUNTRIES
-        )
+        if mode == "business_model" and "business_model_copilot" in sigma_components:
+            return generate_business_model_response(user_input, user_context)
         
-        search_sector = st.selectbox(
-            "Sector:",
-            ["All"] + settings.BUSINESS_SECTORS
-        )
+        elif mode == "credit_assessment" and "credit_engine" in sigma_components:
+            return generate_credit_response(user_input, user_context)
         
-        search_stage = st.selectbox(
-            "Funding Stage:",
-            ["All"] + settings.FUNDING_STAGES
-        )
+        elif mode == "growth_strategy" and "growth_recommender" in sigma_components:
+            return generate_growth_response(user_input, user_context)
         
-        funding_type = st.selectbox(
-            "Type:",
-            ["All", "VC Firm", "Accelerator", "Grant", "Government Fund"]
-        )
+        elif mode == "impact_measurement" and "merl_engine" in sigma_components:
+            return generate_impact_response(user_input, user_context)
         
-        if st.button("Search", use_container_width=True):
-            filters = {}
-            if search_country != "All":
-                filters["country"] = search_country
-            if search_sector != "All":
-                filters["sector"] = search_sector
-            if search_stage != "All":
-                filters["stage"] = search_stage
-            if funding_type != "All":
-                filters["funding_type"] = funding_type
-            
-            st.session_state.funding_results = funding_db.search_funding(**filters)
-    
-    with col2:
-        st.subheader("Results")
-        
-        if hasattr(st.session_state, 'funding_results'):
-            results = st.session_state.funding_results
-            
-            if results:
-                st.success(f"Found {len(results)} funding opportunities")
-                
-                for result in results:
-                    with st.expander(f"**{result['name']}** - {result.get('type', 'N/A')}"):
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.write(f"**Country:** {result.get('country', 'N/A')}")
-                            st.write(f"**Focus Sectors:** {', '.join(result.get('focus_sectors', []))}")
-                            st.write(f"**Stages:** {', '.join(result.get('stage', []))}")
-                        
-                        with col2:
-                            st.write(f"**Investment Range:** {result.get('typical_investment', 'N/A')}")
-                            if result.get('website'):
-                                st.write(f"**Website:** [{result['website']}]({result['website']})")
-                        
-                        st.write(f"**Description:** {result.get('description', '')}")
-                        
-                        if result.get('application_process'):
-                            st.info(f"**Application:** {result['application_process']}")
-            else:
-                st.info("No funding opportunities match your search criteria.")
         else:
-            # Show default overview
-            st.info("Use the filters on the left to search for funding opportunities, or browse the overview below.")
-            
-            # Show funding statistics
-            total_opportunities = len(funding_db.funding_opportunities)
-            by_type = {}
-            for opp in funding_db.funding_opportunities:
-                opp_type = opp.get('type', 'Other')
-                by_type[opp_type] = by_type.get(opp_type, 0) + 1
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Total Opportunities", total_opportunities)
-            
-            with col2:
-                st.metric("VC Firms", by_type.get('VC Firm', 0))
-            
-            with col3:
-                st.metric("Accelerators", by_type.get('Accelerator', 0))
+            # Comprehensive mode using agent orchestration
+            return generate_comprehensive_response(user_input, user_context)
     
-    if st.button("Back to Chat", use_container_width=True):
-        st.session_state.current_page = "chat"
-        st.rerun()
-
-def show_regulatory_page():
-    st.header("Business Regulatory Guide")
-    
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("Select Country")
-        
-        available_countries = list(regulatory_db.business_registration.keys())
-        selected_country = st.selectbox(
-            "Country:",
-            available_countries
+    except Exception as e:
+        # Fallback to basic RAG
+        rag_response = rag_engine.query(
+            question=user_input,
+            conversation_history=st.session_state.conversation_history,
+            user_context=user_context
         )
         
-        if st.button("Generate Guide", use_container_width=True):
-            st.session_state.selected_country = selected_country
-    
-    with col2:
-        if hasattr(st.session_state, 'selected_country'):
-            country = st.session_state.selected_country
-            guide = regulatory_db.generate_country_guide(country)
-            
-            st.markdown(guide)
-            
-            # Additional resources
-            st.subheader("Additional Resources")
-            
-            reg_info = regulatory_db.get_business_registration_info(country)
-            if reg_info.get('online_portal'):
-                st.write(f"**Official Portal:** [{reg_info['online_portal']}]({reg_info['online_portal']})")
-        else:
-            st.info("Select a country from the left panel to view the business registration guide.")
-            
-            # Show overview
-            st.subheader("Available Countries")
-            
-            countries = list(regulatory_db.business_registration.keys())
-            cols = st.columns(2)
-            
-            for i, country in enumerate(countries):
-                col = cols[i % 2]
-                with col:
-                    if st.button(f"{country}", key=f"country_{i}", use_container_width=True):
-                        st.session_state.selected_country = country
-                        st.rerun()
-    
-    if st.button("Back to Chat", use_container_width=True):
-        st.session_state.current_page = "chat"
-        st.rerun()
+        return {
+            "content": rag_response.get("answer", "I apologize, but I couldn't generate a response."),
+            "tools_used": ["rag_engine"],
+            "confidence": rag_response.get("confidence", 0.5),
+            "processing_time": time.time() - start_time,
+            "fallback": True
+        }
 
-def map_stage_to_product_stage(stage: str) -> str:
-    """Map assessment stage to scoring stage"""
-    stage_mapping = {
-        'Idea': 'idea',
-        'Early': 'prototype',
-        'Growing': 'beta',
-        'Established': 'launched'
+def generate_business_model_response(user_input: str, user_context: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate response using business model copilot"""
+    
+    copilot = sigma_components["business_model_copilot"]
+    
+    # Extract business data from context and input
+    entrepreneur_data = {
+        "sector": user_context.get("sector", "general"),
+        "location": user_context.get("country", "Ghana"),
+        "business_stage": user_context.get("business_stage", "early"),
+        "user_type": user_context.get("user_type", []),
+        "query": user_input
     }
-    return stage_mapping.get(stage, 'idea')
+    
+    # Design business model
+    recommendation = copilot.design_business_model(
+        entrepreneur_data, 
+        st.session_state.conversation_history
+    )
+    
+    # Format response
+    response_content = f"""## Business Model Recommendation
+
+**Model Type:** {recommendation.model_type}
+
+**Revenue Streams:**
+{chr(10).join(f'• {stream}' for stream in recommendation.revenue_streams)}
+
+**Key Value Propositions:**
+{chr(10).join(f'• {prop}' for prop in recommendation.value_propositions)}
+
+**Target Customer Segments:**
+{chr(10).join(f'• {segment}' for segment in recommendation.customer_segments)}
+
+**Implementation Steps:**
+{chr(10).join(f'{i+1}. {step}' for i, step in enumerate(recommendation.implementation_steps[:5]))}
+
+**Confidence Level:** {recommendation.confidence_score:.2f}/1.0
+"""
+    
+    return {
+        "content": response_content,
+        "tools_used": ["business_model_copilot"],
+        "confidence": recommendation.confidence_score,
+        "processing_time": time.time() - time.time(),
+        "business_model_data": recommendation
+    }
+
+def generate_comprehensive_response(user_input: str, user_context: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate comprehensive response using agent orchestration"""
+    
+    if "task_orchestrator" in sigma_components:
+        orchestrator = sigma_components["task_orchestrator"]
+        
+        # Use workflow orchestration for complex queries
+        workflow_result = orchestrator.execute_workflow(
+            "entrepreneur_onboarding",
+            user_context.get("user_id", "default_user"),
+            {"query": user_input, "context": user_context}
+        )
+        
+        if workflow_result["status"] == "completed":
+            return format_workflow_response(workflow_result)
+    
+    # Fallback to enhanced agent
+    agent_result = sigma_components["ghana_agent"].process_query_sync(
+        user_input, user_context
+    )
+    
+    return {
+        "content": agent_result.get("answer", ""),
+        "tools_used": agent_result.get("tools_used", []),
+        "confidence": 0.8,
+        "processing_time": time.time() - time.time()
+    }
+
+def show_business_tools():
+    """Show business tools interface"""
+    
+    st.header("🏢 Business Development Tools")
+    
+    tool_tab1, tool_tab2, tool_tab3, tool_tab4 = st.tabs([
+        "Business Model Designer", 
+        "Readiness Assessment", 
+        "Growth Planner", 
+        "Regulatory Guide"
+    ])
+    
+    with tool_tab1:
+        show_business_model_designer()
+    
+    with tool_tab2:
+        show_readiness_assessment()
+    
+    with tool_tab3:
+        show_growth_planner()
+    
+    with tool_tab4:
+        show_regulatory_guide()
+
+def show_financing_tools():
+    """Show financing tools interface"""
+    
+    st.header("💰 Financing & Credit Tools")
+    
+    fin_tab1, fin_tab2, fin_tab3 = st.tabs([
+        "Credit Assessment", 
+        "Funding Database", 
+        "Loan Structuring"
+    ])
+    
+    with fin_tab1:
+        show_credit_assessment_tool()
+    
+    with fin_tab2:
+        show_funding_database()
+    
+    with fin_tab3:
+        show_loan_structuring_tool()
+
+def show_impact_dashboard():
+    """Show impact measurement dashboard"""
+    
+    st.header("📊 Impact Measurement Dashboard")
+    
+    impact_tab1, impact_tab2, impact_tab3 = st.tabs([
+        "Impact Framework", 
+        "MERL Analytics", 
+        "SDG Mapping"
+    ])
+    
+    with impact_tab1:
+        show_impact_framework_builder()
+    
+    with impact_tab2:
+        show_merl_analytics()
+    
+    with impact_tab3:
+        show_sdg_mapping()
+
+def show_platform_tools():
+    """Show platform administration tools"""
+    
+    st.header("🔧 Platform Administration")
+    
+    if st.checkbox("Show Advanced Tools", help="Enable advanced platform tools"):
+        
+        admin_tab1, admin_tab2, admin_tab3 = st.tabs([
+            "System Status", 
+            "Configuration", 
+            "Analytics"
+        ])
+        
+        with admin_tab1:
+            show_system_status()
+        
+        with admin_tab2:
+            show_configuration_panel()
+        
+        with admin_tab3:
+            show_platform_analytics()
+
+def show_business_model_designer():
+    """Business model designer interface"""
+    
+    st.subheader("🎨 Business Model Designer")
+    
+    if "business_model_copilot" not in sigma_components:
+        st.warning("Business Model Copilot not available. Please check configuration.")
+        return
+    
+    with st.form("business_model_form"):
+        st.write("**Design your business model with AI assistance**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            business_desc = st.text_area(
+                "Business Description",
+                placeholder="Describe your business idea or current model...",
+                height=100
+            )
+            
+            target_market = st.text_input(
+                "Target Market",
+                placeholder="Who are your customers?"
+            )
+            
+            value_prop = st.text_area(
+                "Value Proposition",
+                placeholder="What value do you provide?",
+                height=80
+            )
+        
+        with col2:
+            revenue_model = st.selectbox(
+                "Preferred Revenue Model",
+                ["Subscription", "Transaction-based", "Commission", "Advertising", "Freemium", "Marketplace"]
+            )
+            
+            market_size = st.selectbox(
+                "Market Size",
+                ["Local", "Regional", "National", "Continental", "Global"]
+            )
+            
+            business_complexity = st.slider(
+                "Business Complexity",
+                1, 5, 3,
+                help="1=Simple, 5=Complex"
+            )
+        
+        submitted = st.form_submit_button("Design Business Model", use_container_width=True)
+        
+        if submitted and business_desc:
+            with st.spinner("Designing your business model..."):
+                
+                entrepreneur_data = {
+                    "business_description": business_desc,
+                    "target_market": target_market,
+                    "value_proposition": value_prop,
+                    "revenue_model": revenue_model,
+                    "market_size": market_size,
+                    "complexity": business_complexity,
+                    **st.session_state.user_context
+                }
+                
+                copilot = sigma_components["business_model_copilot"]
+                recommendation = copilot.design_business_model(entrepreneur_data)
+                
+                # Display comprehensive business model
+                display_business_model_recommendation(recommendation)
+
+def show_credit_assessment_tool():
+    """Credit assessment tool interface"""
+    
+    st.subheader("💳 Credit Assessment Tool")
+    
+    if "credit_engine" not in sigma_components:
+        st.warning("Credit Underwriting Engine not available. Please check configuration.")
+        return
+    
+    with st.form("credit_assessment_form"):
+        st.write("**Comprehensive credit assessment for African markets**")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.write("**Personal Information**")
+            age = st.slider("Age", 18, 70, 35)
+            gender = st.selectbox("Gender", ["Female", "Male", "Other"])
+            education = st.selectbox("Education Level", 
+                ["Primary", "Secondary", "Tertiary", "Vocational", "Graduate"])
+        
+        with col2:
+            st.write("**Business Information**")
+            business_age = st.slider("Business Age (months)", 0, 120, 12)
+            monthly_revenue = st.number_input("Monthly Revenue (USD)", 0, 50000, 1000)
+            employees = st.slider("Number of Employees", 0, 50, 2)
+        
+        with col3:
+            st.write("**Financial Information**")
+            loan_amount = st.number_input("Requested Loan Amount (USD)", 1000, 500000, 25000)
+            loan_term = st.slider("Loan Term (months)", 6, 60, 12)
+            collateral = st.checkbox("Has Collateral Available")
+        
+        # Alternative data section
+        st.write("**Alternative Data (Optional)**")
+        col4, col5 = st.columns(2)
+        
+        with col4:
+            mobile_money = st.checkbox("Regular Mobile Money Usage")
+            community_leader = st.checkbox("Community Leader/Member")
+            group_member = st.checkbox("Member of Business Group/Cooperative")
+        
+        with col5:
+            social_refs = st.slider("Social References Available", 0, 10, 3)
+            bank_account = st.checkbox("Has Bank Account")
+            credit_history = st.checkbox("Has Formal Credit History")
+        
+        submitted = st.form_submit_button("Assess Credit", use_container_width=True)
+        
+        if submitted:
+            with st.spinner("Analyzing creditworthiness..."):
+                
+                # Prepare assessment data
+                applicant_data = {
+                    "age": age,
+                    "gender": gender.lower(),
+                    "education_level": education,
+                    "business_age_months": business_age,
+                    "monthly_revenue": monthly_revenue,
+                    "team_size": employees,
+                    "has_collateral": collateral,
+                    "location": st.session_state.user_context.get("country", "Ghana"),
+                    "sector": st.session_state.user_context.get("sector", "general")
+                }
+                
+                loan_request = {
+                    "amount": loan_amount,
+                    "term_months": loan_term,
+                    "purpose": "business_expansion"
+                }
+                
+                alternative_data = {
+                    "mobile_money_data": {
+                        "account_age_months": 24 if mobile_money else 0,
+                        "transaction_frequency": 15 if mobile_money else 0
+                    },
+                    "social_network_data": {
+                        "community_endorsements": 5 if community_leader else 0,
+                        "network_quality_score": 0.8 if group_member else 0.3
+                    }
+                }
+                
+                # Perform assessment
+                credit_engine = sigma_components["credit_engine"]
+                assessment = credit_engine.assess_credit_application(
+                    applicant_data, loan_request, alternative_data
+                )
+                
+                # Display results
+                display_credit_assessment_results(assessment)
+
+def display_credit_assessment_results(assessment):
+    """Display credit assessment results"""
+    
+    st.markdown("### 📊 Credit Assessment Results")
+    
+    # Overall score and recommendation
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        score_color = "green" if assessment.credit_score > 70 else "orange" if assessment.credit_score > 50 else "red"
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3 style="color: white;">Credit Score</h3>
+            <h2 style="color: white;">{assessment.credit_score:.0f}/100</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3 style="color: white;">Risk Category</h3>
+            <h2 style="color: white;">{assessment.risk_category}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        approval_prob = assessment.approval_probability * 100
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3 style="color: white;">Approval Probability</h3>
+            <h2 style="color: white;">{approval_prob:.0f}%</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3 style="color: white;">Recommended Amount</h3>
+            <h2 style="color: white;">${assessment.recommended_amount:,.0f}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Detailed breakdown
+    col5, col6 = st.columns(2)
+    
+    with col5:
+        st.markdown("#### Risk Factors")
+        for risk in assessment.risk_factors:
+            st.warning(f"• {risk}")
+    
+    with col6:
+        st.markdown("#### Mitigating Factors")
+        for factor in assessment.mitigating_factors:
+            st.success(f"• {factor}")
+    
+    # Loan recommendation details
+    st.markdown("#### Loan Recommendation")
+    loan_rec = assessment.loan_recommendation
+    
+    rec_col1, rec_col2, rec_col3 = st.columns(3)
+    
+    with rec_col1:
+        st.metric("Recommended Term", f"{assessment.recommended_term} months")
+        st.metric("Interest Rate", f"{assessment.interest_rate_suggestion:.1%}")
+    
+    with rec_col2:
+        st.metric("Monthly Payment", f"${(assessment.recommended_amount * (assessment.interest_rate_suggestion/12)) / (1 - (1 + assessment.interest_rate_suggestion/12)**(-assessment.recommended_term)):,.0f}")
+    
+    with rec_col3:
+        if assessment.alternative_products:
+            st.write("**Alternative Products:**")
+            for alt in assessment.alternative_products[:2]:
+                st.info(f"• {alt.get('name', 'Alternative Product')}")
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
         st.error(f"""
-        ## Application Error
+        ## SIGMA Platform Error
         
-        There was an error running UbuntuAI: {str(e)}
+        There was an error running the SIGMA platform: {str(e)}
         
         **Common solutions:**
-        1. Make sure your OpenAI API key is set in the `.env` file
-        2. Install all required dependencies: `pip install -r requirements.txt`
-        3. Check that all files are in the correct directory structure
+        1. Ensure all environment variables are properly set
+        2. Check that all dependencies are installed: `pip install -r requirements.txt`
+        3. Verify that the SIGMA platform components are properly initialized
         
-        **For support:** Please check the documentation or contact support.
+        **For technical support:** Check the troubleshooting guide or contact support.
         """)
         
         if st.button("Retry"):
