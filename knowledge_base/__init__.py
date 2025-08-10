@@ -1,0 +1,1 @@
+"""Knowledge base package for African business ecosystem data"""
