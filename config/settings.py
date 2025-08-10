@@ -1,44 +1,86 @@
 import os
-from typing import Dict, Any
+import logging
+from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+class SettingsValidationError(Exception):
+    """Custom exception for settings validation errors"""
+    pass
+
 class Settings:
+    """
+    Application configuration settings with validation and error handling.
+    Loads from environment variables with sensible defaults.
+    """
+    
     def __init__(self):
-        # API Keys
-        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+        """Initialize settings with validation"""
+        try:
+            self._load_api_keys()
+            self._load_database_config()
+            self._load_model_config()
+            self._load_business_context()
+            self._load_ui_config()
+            self._load_performance_config()
+            self._load_integration_config()
+            
+            # Validate critical settings
+            self.validate_config()
+            logger.info("Settings loaded and validated successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize settings: {e}")
+            raise SettingsValidationError(f"Configuration error: {e}")
+    
+    def _load_api_keys(self):
+        """Load and validate API keys"""
+        # Set Gemini API key directly
+        self.GOOGLE_API_KEY = "AIzaSyBC7kXEa_9964Sq6vZNChm2S3HYNLhx8kg"
         self.PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
         self.PINECONE_ENV = os.getenv("PINECONE_ENV")
         
-        # WhatsApp/Twilio Configuration
-        self.TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-        self.TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-        self.TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
-        
-        # Agent Configuration
-        self.USE_LANGCHAIN_AGENTS = os.getenv("USE_LANGCHAIN_AGENTS", "true").lower() == "true"
-        self.AGENT_MAX_ITERATIONS = int(os.getenv("AGENT_MAX_ITERATIONS", "5"))
-        self.AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "120"))  # seconds
-        
-        # Vector Database Configuration
+        if not self.GOOGLE_API_KEY:
+            logger.warning("GOOGLE_API_KEY not set - some features will be disabled")
+    
+    def _load_database_config(self):
+        """Load vector database configuration"""
         self.CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIRECTORY", "./vector_db")
-        self.COLLECTION_NAME = "african_business_knowledge"
+        self.COLLECTION_NAME = os.getenv("COLLECTION_NAME", "african_business_knowledge")
         
-        # Embedding Configuration
-        self.EMBEDDING_MODEL = "text-embedding-ada-002"
-        self.EMBEDDING_DIMENSIONS = 1536
-        self.CHUNK_SIZE = 1024
-        self.CHUNK_OVERLAP = 200
+        # Ensure directory exists
+        os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
+    
+    def _load_model_config(self):
+        """Load AI model configuration"""
+        self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-1.5-pro")
+        self.EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+        self.CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1024"))
+        self.CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
         
         # RAG Configuration
-        self.SIMILARITY_THRESHOLD = 0.7
-        self.MAX_RETRIEVED_CHUNKS = 10
-        self.CONTEXT_WINDOW = 8000
-        self.TEMPERATURE = 0.3
-        self.MAX_TOKENS = 1000
+        self.SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.3"))
+        self.MAX_RETRIEVED_CHUNKS = int(os.getenv("MAX_RETRIEVED_CHUNKS", "10"))
+        self.CONTEXT_WINDOW = int(os.getenv("CONTEXT_WINDOW", "4000"))
+        self.TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
+        self.MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))
         
-        # Business Context Configuration - Enhanced for Ghana
+        # Validate ranges
+        if not 0 <= self.SIMILARITY_THRESHOLD <= 1:
+            raise SettingsValidationError("SIMILARITY_THRESHOLD must be between 0 and 1")
+        if not 0 <= self.TEMPERATURE <= 2:
+            raise SettingsValidationError("TEMPERATURE must be between 0 and 2")
+    
+    def _load_business_context(self):
+        """Load business context data"""
         self.AFRICAN_COUNTRIES = [
             "Nigeria", "Kenya", "South Africa", "Ghana", "Egypt", "Morocco",
             "Tunisia", "Uganda", "Tanzania", "Rwanda", "Senegal", "Ivory Coast",
@@ -53,7 +95,6 @@ class Settings:
             "Burundi", "Lesotho", "Swaziland", "Angola", "Namibia"
         ]
         
-        # Ghana-specific regions and cities
         self.GHANA_REGIONS = [
             "Greater Accra", "Ashanti", "Northern", "Western", "Eastern",
             "Volta", "Central", "Upper East", "Upper West", "Brong-Ahafo",
@@ -70,53 +111,48 @@ class Settings:
             "Logistics", "Energy", "Clean Technology", "Manufacturing",
             "Real Estate", "Tourism", "Media", "Telecommunications",
             "Retail", "Food & Beverage", "Transportation", "Construction",
-            "Mining", "Oil & Gas", "Water", "Waste Management",
-            # Ghana-specific sectors
-            "Cocoa Processing", "Gold Mining", "Palm Oil", "Cassava Processing",
-            "Poultry Farming", "Aquaculture", "Timber", "Textiles"
+            "Mining", "Oil & Gas", "Water", "Waste Management"
         ]
         
-        # Enhanced funding stages with Ghana context
         self.FUNDING_STAGES = [
             "Pre-seed", "Seed", "Series A", "Series B", "Series C",
-            "Growth", "Bridge", "Mezzanine", "IPO", "Grant", "Government",
-            # Ghana-specific
-            "Microfinance", "Community Fund", "Cooperative", "Susu Group"
+            "Growth", "Bridge", "Mezzanine", "IPO", "Grant", "Government"
         ]
+    
+    def _load_ui_config(self):
+        """Load UI configuration"""
+        self.APP_TITLE = os.getenv("APP_TITLE", "UbuntuAI - African Business Intelligence")
+        self.APP_DESCRIPTION = os.getenv("APP_DESCRIPTION", "Your AI-powered guide to African entrepreneurship")
+        self.CHAT_PLACEHOLDER = os.getenv("CHAT_PLACEHOLDER", "Ask me anything about African business, funding, regulations, or market insights...")
+    
+    def _load_performance_config(self):
+        """Load performance and caching configuration"""
+        self.CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
+        self.MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "10"))
+        self.REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "30"))
         
-        # Ghana business development priorities
-        self.GHANA_BUSINESS_PRIORITIES = [
-            "Digital inclusion", "Financial inclusion", "Agricultural productivity",
-            "Job creation", "Export promotion", "Import substitution",
-            "Rural development", "Women empowerment", "Youth employment"
-        ]
+        if self.MAX_CONCURRENT_REQUESTS <= 0:
+            raise SettingsValidationError("MAX_CONCURRENT_REQUESTS must be positive")
+    
+    def _load_integration_config(self):
+        """Load integration configurations"""
+        # WhatsApp/Twilio Configuration
+        self.TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+        self.TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+        self.TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
         
-        # UI Configuration
-        self.APP_TITLE = "UbuntuAI - African Business Intelligence"
-        self.APP_DESCRIPTION = "Your AI-powered guide to African entrepreneurship"
-        self.CHAT_PLACEHOLDER = "Ask me anything about African business, funding, regulations, or market insights..."
-        
-        # Performance Configuration - Enhanced for low-resource environments
-        self.CACHE_TTL = 3600
-        self.MAX_CONCURRENT_REQUESTS = 10
-        self.REQUEST_TIMEOUT = 30
+        # Agent Configuration
+        self.USE_LANGCHAIN_AGENTS = os.getenv("USE_LANGCHAIN_AGENTS", "true").lower() == "true"
+        self.AGENT_MAX_ITERATIONS = int(os.getenv("AGENT_MAX_ITERATIONS", "5"))
+        self.AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "120"))
         
         # WhatsApp optimization settings
-        self.WHATSAPP_MAX_MESSAGE_LENGTH = 1600
-        self.WHATSAPP_SESSION_TIMEOUT = 24 * 60 * 60  # 24 hours in seconds
-        self.WHATSAPP_MAX_SESSIONS = 1000
-        
-        # Agent workflow settings
-        self.AGENT_RESPONSE_CACHE = True
-        self.AGENT_MAX_TOOL_CALLS = 10
-        self.SCORING_CONFIDENCE_THRESHOLD = 0.6
-        
-        # Low-bandwidth optimizations
-        self.OPTIMIZE_FOR_MOBILE = True
-        self.COMPRESS_RESPONSES = True
-        self.MAX_RESPONSE_TOKENS = 500  # For mobile users
+        self.WHATSAPP_MAX_MESSAGE_LENGTH = int(os.getenv("WHATSAPP_MAX_MESSAGE_LENGTH", "1600"))
+        self.WHATSAPP_SESSION_TIMEOUT = int(os.getenv("WHATSAPP_SESSION_TIMEOUT", "86400"))  # 24 hours
+        self.WHATSAPP_MAX_SESSIONS = int(os.getenv("WHATSAPP_MAX_SESSIONS", "1000"))
     
     def get_model_config(self) -> Dict[str, Any]:
+        """Get OpenAI model configuration"""
         return {
             "temperature": self.TEMPERATURE,
             "max_tokens": self.MAX_TOKENS,
@@ -126,38 +162,34 @@ class Settings:
         }
     
     def get_mobile_model_config(self) -> Dict[str, Any]:
-        """Optimized config for mobile/WhatsApp users"""
+        """Get optimized config for mobile/WhatsApp users"""
         return {
             "temperature": 0.3,
-            "max_tokens": self.MAX_RESPONSE_TOKENS,
+            "max_tokens": min(500, self.MAX_TOKENS),
             "top_p": 0.9,
             "frequency_penalty": 0.1,
             "presence_penalty": 0.1
         }
     
-    def get_agent_config(self) -> Dict[str, Any]:
-        """Configuration for LangChain agents"""
+    def get_embedding_config(self) -> Dict[str, Any]:
+        """Get embedding configuration"""
         return {
-            "max_iterations": self.AGENT_MAX_ITERATIONS,
-            "timeout": self.AGENT_TIMEOUT,
-            "use_agents": self.USE_LANGCHAIN_AGENTS,
-            "max_tool_calls": self.AGENT_MAX_TOOL_CALLS
+            "model": self.EMBEDDING_MODEL,
+            "dimensions": self.EMBEDDING_DIMENSIONS
         }
     
-    def get_ghana_context(self) -> Dict[str, Any]:
-        """Get Ghana-specific business context"""
+    def get_chunking_config(self) -> Dict[str, Any]:
+        """Get text chunking configuration"""
         return {
-            "regions": self.GHANA_REGIONS,
-            "major_cities": self.GHANA_MAJOR_CITIES,
-            "business_priorities": self.GHANA_BUSINESS_PRIORITIES,
-            "local_sectors": [s for s in self.BUSINESS_SECTORS if s in [
-                "Cocoa Processing", "Gold Mining", "Palm Oil", "Cassava Processing",
-                "Poultry Farming", "Aquaculture", "Timber", "Textiles"
-            ]]
+            "chunk_size": self.CHUNK_SIZE,
+            "chunk_overlap": self.CHUNK_OVERLAP
         }
     
-    def get_whatsapp_config(self) -> Dict[str, Any]:
-        """Get WhatsApp integration configuration"""
+    def get_whatsapp_config(self) -> Optional[Dict[str, Any]]:
+        """Get WhatsApp integration configuration if available"""
+        if not all([self.TWILIO_ACCOUNT_SID, self.TWILIO_AUTH_TOKEN, self.TWILIO_WHATSAPP_NUMBER]):
+            return None
+            
         return {
             "account_sid": self.TWILIO_ACCOUNT_SID,
             "auth_token": self.TWILIO_AUTH_TOKEN,
@@ -167,27 +199,76 @@ class Settings:
             "max_sessions": self.WHATSAPP_MAX_SESSIONS
         }
     
-    def get_embedding_config(self) -> Dict[str, Any]:
-        return {
-            "model": self.EMBEDDING_MODEL,
-            "dimensions": self.EMBEDDING_DIMENSIONS
-        }
-    
-    def get_chunking_config(self) -> Dict[str, Any]:
-        return {
-            "chunk_size": self.CHUNK_SIZE,
-            "chunk_overlap": self.CHUNK_OVERLAP
-        }
-    
     def validate_config(self) -> bool:
-        if not self.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required")
+        """
+        Validate configuration settings
         
-        # Validate WhatsApp config if agents are enabled
-        if self.USE_LANGCHAIN_AGENTS:
-            if not all([self.TWILIO_ACCOUNT_SID, self.TWILIO_AUTH_TOKEN, self.TWILIO_WHATSAPP_NUMBER]):
-                print("WARNING: WhatsApp integration not fully configured. Some features may be disabled.")
+        Returns:
+            bool: True if configuration is valid
+            
+        Raises:
+            SettingsValidationError: If critical configuration is invalid
+        """
+        errors = []
         
+        # Check critical API keys
+        if not self.GOOGLE_API_KEY:
+            errors.append("GOOGLE_API_KEY is required for AI functionality")
+        
+        # Validate numeric ranges
+        if not 0 <= self.SIMILARITY_THRESHOLD <= 1:
+            errors.append("SIMILARITY_THRESHOLD must be between 0 and 1")
+            
+        if self.MAX_RETRIEVED_CHUNKS <= 0:
+            errors.append("MAX_RETRIEVED_CHUNKS must be positive")
+            
+        if self.CONTEXT_WINDOW <= 0:
+            errors.append("CONTEXT_WINDOW must be positive")
+        
+        # Validate directory permissions
+        try:
+            os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
+            test_file = os.path.join(self.CHROMA_PERSIST_DIRECTORY, ".test")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+        except (OSError, PermissionError) as e:
+            errors.append(f"Cannot write to vector database directory: {e}")
+        
+        if errors:
+            raise SettingsValidationError("; ".join(errors))
+        
+        # Log warnings for optional configurations
+        if not self.get_whatsapp_config():
+            logger.warning("WhatsApp integration not configured - mobile features will be limited")
+            
         return True
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Export settings as dictionary (excluding sensitive data)"""
+        return {
+            "app_title": self.APP_TITLE,
+            "embedding_model": self.EMBEDDING_MODEL,
+            "chunk_size": self.CHUNK_SIZE,
+            "similarity_threshold": self.SIMILARITY_THRESHOLD,
+            "max_chunks": self.MAX_RETRIEVED_CHUNKS,
+            "has_google_key": bool(self.GOOGLE_API_KEY),
+            "has_whatsapp_config": bool(self.get_whatsapp_config()),
+            "supported_countries": len(self.AFRICAN_COUNTRIES),
+            "supported_sectors": len(self.BUSINESS_SECTORS)
+        }
 
-settings = Settings()
+# Global settings instance
+try:
+    settings = Settings()
+except SettingsValidationError as e:
+    logger.error(f"Failed to load settings: {e}")
+    # Create a minimal fallback settings for development
+    settings = type('FallbackSettings', (), {
+        'GOOGLE_API_KEY': None,
+        'CHROMA_PERSIST_DIRECTORY': './vector_db',
+        'COLLECTION_NAME': 'african_business_knowledge',
+        'APP_TITLE': 'UbuntuAI - Configuration Error',
+        'validate_config': lambda: False
+    })()
+    logger.warning("Using fallback settings due to configuration errors")

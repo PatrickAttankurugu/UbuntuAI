@@ -1,0 +1,368 @@
+# UbuntuAI Project .gitignore
+
+# Environment variables and secrets
+.env
+.env.local
+.env.production
+.env.staging
+*.env
+
+# API Keys and sensitive configuration
+config/secrets.py
+config/api_keys.py
+*.key
+*.pem
+*.p12
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+.ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+logs/
+ubuntuai.log
+knowledge_base_init.log
+*.log.*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+vector_db/
+chroma.sqlite3
+data/processed/
+*.db-journal
+
+# Vector database and embeddings
+vector_db/
+embeddings/
+*.pkl
+*.pickle
+*.joblib
+
+# Data files
+data/sources/
+data/processed/
+*.csv
+*.xlsx
+*.xls
+*.json
+*.xml
+*.txt
+!requirements.txt
+!README.md
+!env_example.txt
+
+# Model files and AI artifacts
+models/
+*.model
+*.bin
+*.h5
+*.pth
+*.pt
+*.onnx
+*.tflite
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Cache
+.cache/
+cache/
+*.cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# Documentation builds
+docs/_build/
+docs/build/
+
+# Testing
+.pytest_cache/
+.coverage
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Streamlit specific
+.streamlit/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows specific
+*.lnk
+*.exe
+*.msi
+*.dll
+*.pyd
+
+# Linux specific
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+
+# Compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Large media files
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+
+# Font files
+*.ttf
+*.otf
+*.woff
+*.woff2
+*.eot
+
+# Image files (if any)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.svg
+*.ico
+
+# Archive files
+*.tar
+*.gz
+*.bz2
+*.xz
+*.zip
+*.rar
+*.7z
+
+# Node.js (if any frontend components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# Docker (if containerized)
+Dockerfile
+docker-compose.yml
+.dockerignore
+*.dockerfile
+
+# Kubernetes (if deployed)
+*.yaml
+*.yml
+!k8s/*.yaml
+!k8s/*.yml
+
+# Terraform (if infrastructure as code)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Local development
+local/
+dev/
+development/
+staging/
+production/
+
+# Monitoring and analytics
+monitoring/
+analytics/
+*.metrics
+*.stats
+
+# Backup and recovery
+backup/
+recovery/
+snapshots/
+
+# Security
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+secrets/
+passwords.txt
+credentials.txt
+
+# Performance and profiling
+*.prof
+*.profile
+*.trace
+*.perf
+
+# Memory dumps
+*.dmp
+*.hprof
+*.heap
+
+# Temporary build artifacts
+build/
+dist/
+target/
+out/
+
+# Package manager files
+package-lock.json
+yarn.lock
+poetry.lock
+Pipfile.lock
+
+# Local configuration overrides
+config/local.py
+config/dev.py
+config/staging.py
+config/production.py
+
+# User-specific files
+user_config.py
+personal_settings.py
+local_settings.py
+
+# Test artifacts
+test_results/
+test_output/
+test_reports/
+.coverage
+coverage.xml
+.pytest_cache/
+
+# Documentation artifacts
+docs/_build/
+docs/build/
+site/
+
+# IDE workspace files
+*.code-workspace
+.project
+.classpath
+.settings/
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Application specific
+# Exclude any application-specific temporary or cache directories
+app_cache/
+user_data/
+session_data/
+temp_uploads/
+file_uploads/
+
+# Exclude any files with sensitive information in their names
+*password*
+*secret*
+*key*
+*token*
+*credential*
+*private*
+*confidential*
+
+# Keep important files
+!requirements.txt
+!README.md
+!env_example.txt
+!*.md
+!.gitignore
+!LICENSE
+!setup.py
+!pyproject.toml
+!Makefile
+!Dockerfile
+!docker-compose.yml
+!k8s/*.yaml
+!k8s/*.yml 

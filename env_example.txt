@@ -1,0 +1,26 @@
+# UbuntuAI Environment Configuration
+# Copy this file to .env and add your API keys
+
+# OpenAI API Key (Required)
+# Get from: https://platform.openai.com/api-keys
+OPENAI_API_KEY=your_openai_api_key_here
+
+# WhatsApp/Twilio Configuration (Optional - for WhatsApp integration)
+# Get from: https://console.twilio.com/
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_WHATSAPP_NUMBER=whatsapp:+1415xxxxxxx
+
+# Vector Database Settings (Optional - defaults will work)
+CHROMA_PERSIST_DIRECTORY=./vector_db
+COLLECTION_NAME=african_business_knowledge
+
+# Model Configuration (Optional - defaults will work)
+EMBEDDING_MODEL=text-embedding-ada-002
+SIMILARITY_THRESHOLD=0.3
+MAX_RETRIEVED_CHUNKS=10
+CONTEXT_WINDOW=4000
+
+# Agent Configuration (Optional)
+USE_LANGCHAIN_AGENTS=true
+AGENT_MAX_ITERATIONS=5 

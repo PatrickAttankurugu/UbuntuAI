@@ -1,4 +1,4 @@
-import openai
+import google.generativeai as genai
 import json
 import re
 from typing import Dict, List, Any, Optional, Tuple
@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 class WhatsAppBusinessAgent:
     def __init__(self):
+        # Initialize Gemini
+        genai.configure(api_key=settings.GOOGLE_API_KEY)
+        self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+        
         self.twilio_client = Client(
             settings.TWILIO_ACCOUNT_SID,
             settings.TWILIO_AUTH_TOKEN
