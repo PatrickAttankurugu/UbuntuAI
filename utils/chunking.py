@@ -1,18 +1,18 @@
 import re
 from typing import List, Dict, Any, Optional, Tuple
-import tiktoken
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from config.settings import settings
 
 class BusinessContextChunker:
     def __init__(self, 
                  chunk_size: int = None, 
-                 chunk_overlap: int = None,
-                 model_name: str = "gpt-3.5-turbo"):
+                 chunk_overlap: int = None):
         
         self.chunk_size = chunk_size or settings.CHUNK_SIZE
         self.chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
-        self.encoding = tiktoken.encoding_for_model(model_name)
+        
+        # Use character-based token counting for Gemini (approximately 1 token = 4 characters)
+        self.char_to_token_ratio = 4
         
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
@@ -33,7 +33,8 @@ class BusinessContextChunker:
         }
     
     def _count_tokens(self, text: str) -> int:
-        return len(self.encoding.encode(text))
+        """Estimate token count for Gemini (approximately 1 token = 4 characters)"""
+        return len(text) // self.char_to_token_ratio
     
     def _identify_business_context(self, text: str) -> List[str]:
         text_lower = text.lower()

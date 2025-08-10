@@ -43,13 +43,13 @@ class Settings:
     
     def _load_api_keys(self):
         """Load and validate API keys"""
-        # Set Gemini API key directly
-        self.GOOGLE_API_KEY = "AIzaSyBC7kXEa_9964Sq6vZNChm2S3HYNLhx8kg"
+        # Use Google Gemini API exclusively
+        self.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
         self.PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
         self.PINECONE_ENV = os.getenv("PINECONE_ENV")
         
         if not self.GOOGLE_API_KEY:
-            logger.warning("GOOGLE_API_KEY not set - some features will be disabled")
+            logger.warning("GOOGLE_API_KEY not set - AI features will be disabled")
     
     def _load_database_config(self):
         """Load vector database configuration"""
@@ -61,23 +61,35 @@ class Settings:
     
     def _load_model_config(self):
         """Load AI model configuration"""
-        self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-1.5-pro")
-        self.EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+        # Gemini embedding model configuration
+        self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
+        self.EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "3072"))  # Gemini default
+        self.EMBEDDING_TASK_TYPE = os.getenv("EMBEDDING_TASK_TYPE", "RETRIEVAL_DOCUMENT")
+        
+        # Text processing configuration
         self.CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1024"))
         self.CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+        self.MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "2048"))  # Gemini embedding limit
         
         # RAG Configuration
         self.SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.3"))
         self.MAX_RETRIEVED_CHUNKS = int(os.getenv("MAX_RETRIEVED_CHUNKS", "10"))
         self.CONTEXT_WINDOW = int(os.getenv("CONTEXT_WINDOW", "4000"))
+        
+        # Gemini LLM configuration
+        self.LLM_MODEL = os.getenv("LLM_MODEL", "gemini-1.5-pro")
         self.TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
         self.MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))
+        self.TOP_P = float(os.getenv("TOP_P", "0.9"))
+        self.TOP_K = int(os.getenv("TOP_K", "40"))
         
         # Validate ranges
         if not 0 <= self.SIMILARITY_THRESHOLD <= 1:
             raise SettingsValidationError("SIMILARITY_THRESHOLD must be between 0 and 1")
         if not 0 <= self.TEMPERATURE <= 2:
             raise SettingsValidationError("TEMPERATURE must be between 0 and 2")
+        if not 0 <= self.TOP_P <= 1:
+            raise SettingsValidationError("TOP_P must be between 0 and 1")
     
     def _load_business_context(self):
         """Load business context data"""
@@ -151,38 +163,41 @@ class Settings:
         self.WHATSAPP_SESSION_TIMEOUT = int(os.getenv("WHATSAPP_SESSION_TIMEOUT", "86400"))  # 24 hours
         self.WHATSAPP_MAX_SESSIONS = int(os.getenv("WHATSAPP_MAX_SESSIONS", "1000"))
     
-    def get_model_config(self) -> Dict[str, Any]:
-        """Get OpenAI model configuration"""
+    def get_gemini_config(self) -> Dict[str, Any]:
+        """Get Gemini model configuration"""
         return {
+            "model": self.LLM_MODEL,
             "temperature": self.TEMPERATURE,
-            "max_tokens": self.MAX_TOKENS,
-            "top_p": 1.0,
-            "frequency_penalty": 0.0,
-            "presence_penalty": 0.0
+            "top_p": self.TOP_P,
+            "top_k": self.TOP_K,
+            "max_output_tokens": self.MAX_TOKENS
         }
     
-    def get_mobile_model_config(self) -> Dict[str, Any]:
-        """Get optimized config for mobile/WhatsApp users"""
+    def get_mobile_gemini_config(self) -> Dict[str, Any]:
+        """Get optimized Gemini config for mobile/WhatsApp users"""
         return {
+            "model": "gemini-1.5-flash",  # Faster model for mobile
             "temperature": 0.3,
-            "max_tokens": min(500, self.MAX_TOKENS),
             "top_p": 0.9,
-            "frequency_penalty": 0.1,
-            "presence_penalty": 0.1
+            "top_k": 40,
+            "max_output_tokens": min(500, self.MAX_TOKENS)
         }
     
     def get_embedding_config(self) -> Dict[str, Any]:
         """Get embedding configuration"""
         return {
             "model": self.EMBEDDING_MODEL,
-            "dimensions": self.EMBEDDING_DIMENSIONS
+            "dimensions": self.EMBEDDING_DIMENSIONS,
+            "task_type": self.EMBEDDING_TASK_TYPE,
+            "max_input_tokens": self.MAX_INPUT_TOKENS
         }
     
     def get_chunking_config(self) -> Dict[str, Any]:
         """Get text chunking configuration"""
         return {
             "chunk_size": self.CHUNK_SIZE,
-            "chunk_overlap": self.CHUNK_OVERLAP
+            "chunk_overlap": self.CHUNK_OVERLAP,
+            "max_input_tokens": self.MAX_INPUT_TOKENS
         }
     
     def get_whatsapp_config(self) -> Optional[Dict[str, Any]]:
@@ -224,6 +239,9 @@ class Settings:
             
         if self.CONTEXT_WINDOW <= 0:
             errors.append("CONTEXT_WINDOW must be positive")
+            
+        if self.EMBEDDING_DIMENSIONS not in [768, 1536, 3072]:
+            logger.warning(f"EMBEDDING_DIMENSIONS {self.EMBEDDING_DIMENSIONS} is not optimal. Recommended: 768, 1536, or 3072")
         
         # Validate directory permissions
         try:
@@ -248,7 +266,9 @@ class Settings:
         """Export settings as dictionary (excluding sensitive data)"""
         return {
             "app_title": self.APP_TITLE,
+            "llm_model": self.LLM_MODEL,
             "embedding_model": self.EMBEDDING_MODEL,
+            "embedding_dimensions": self.EMBEDDING_DIMENSIONS,
             "chunk_size": self.CHUNK_SIZE,
             "similarity_threshold": self.SIMILARITY_THRESHOLD,
             "max_chunks": self.MAX_RETRIEVED_CHUNKS,

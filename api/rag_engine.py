@@ -6,15 +6,29 @@ from config.prompts import prompt_templates
 from utils.context_enhancer import context_enhancer
 import json
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class RAGEngine:
     def __init__(self):
+        if not settings.GOOGLE_API_KEY:
+            raise ValueError("Google API key not configured for RAG engine")
+            
         genai.configure(api_key=settings.GOOGLE_API_KEY)
-        self.model = genai.GenerativeModel('gemini-1.5-pro')
+        
+        # Initialize Gemini model for text generation
+        self.model = genai.GenerativeModel(
+            model_name=settings.LLM_MODEL,
+            generation_config=settings.get_gemini_config()
+        )
+        
         self.vector_store = vector_store
         self.similarity_threshold = settings.SIMILARITY_THRESHOLD
         self.max_chunks = settings.MAX_RETRIEVED_CHUNKS
         self.context_window = settings.CONTEXT_WINDOW
+        
+        logger.info(f"RAG Engine initialized with model: {settings.LLM_MODEL}")
     
     def query(self, 
              question: str, 
@@ -36,7 +50,8 @@ class RAGEngine:
                 question, 
                 retrieved_docs, 
                 conversation_history,
-                query_classification
+                query_classification,
+                user_context
             )
             
             # Step 5: Generate follow-up questions
@@ -52,6 +67,7 @@ class RAGEngine:
             }
             
         except Exception as e:
+            logger.error(f"RAG Engine error: {e}")
             return {
                 "answer": f"I apologize, but I encountered an error processing your question: {str(e)}",
                 "sources": [],
@@ -83,9 +99,10 @@ class RAGEngine:
             
             try:
                 response = self.model.generate_content(context_prompt)
-                return response.text.strip()
-            except Exception:
-                pass
+                if response and response.text:
+                    return response.text.strip()
+            except Exception as e:
+                logger.warning(f"Context enhancement failed: {e}")
         
         return enhancements.get('expanded_query', query)
     
@@ -94,11 +111,18 @@ class RAGEngine:
         
         try:
             response = self.model.generate_content(classification_prompt)
-            result = response.text.strip()
-            return json.loads(result)
-            
-        except Exception as e:
-            # Fallback classification
+            if response and response.text:
+                # Try to parse JSON response
+                result = response.text.strip()
+                # Remove markdown code blocks if present
+                if result.startswith('```'):
+                    result = result.split('\n', 1)[1].rsplit('\n', 1)[0]
+                return json.loads(result)
+            else:
+                return self._fallback_classification(query)
+                
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Query classification failed: {e}")
             return self._fallback_classification(query)
     
     def _fallback_classification(self, query: str) -> Dict[str, Any]:
@@ -108,21 +132,20 @@ class RAGEngine:
         confidence_scores = {}
         
         # Simple keyword-based classification
-        if any(word in query_lower for word in ['funding', 'investment', 'vc', 'capital', 'grant']):
-            categories.append('FUNDING')
-            confidence_scores['FUNDING'] = 0.8
+        classification_keywords = {
+            'FUNDING': ['funding', 'investment', 'vc', 'capital', 'grant', 'investor', 'money'],
+            'REGULATORY': ['regulation', 'legal', 'compliance', 'registration', 'license', 'permit'],
+            'MARKET': ['market', 'industry', 'competition', 'trends', 'analysis', 'research'],
+            'SUCCESS_STORIES': ['success', 'case study', 'company', 'founder', 'unicorn'],
+            'SECTOR': ['fintech', 'agritech', 'healthtech', 'edtech', 'technology'],
+            'COUNTRY': ['nigeria', 'kenya', 'ghana', 'south africa', 'egypt', 'morocco']
+        }
         
-        if any(word in query_lower for word in ['regulation', 'legal', 'compliance', 'registration']):
-            categories.append('REGULATORY')
-            confidence_scores['REGULATORY'] = 0.8
-        
-        if any(word in query_lower for word in ['market', 'industry', 'competition', 'trends']):
-            categories.append('MARKET')
-            confidence_scores['MARKET'] = 0.8
-        
-        if any(word in query_lower for word in ['success', 'case study', 'company', 'founder']):
-            categories.append('SUCCESS_STORIES')
-            confidence_scores['SUCCESS_STORIES'] = 0.8
+        for category, keywords in classification_keywords.items():
+            matches = sum(1 for keyword in keywords if keyword in query_lower)
+            if matches > 0:
+                categories.append(category)
+                confidence_scores[category] = min(matches / len(keywords) * 2, 1.0)
         
         if not categories:
             categories = ['GENERAL']
@@ -140,14 +163,23 @@ class RAGEngine:
         categories = classification.get('categories', [])
         if categories and 'GENERAL' not in categories:
             # Add category-based filtering if needed
-            pass
+            if 'COUNTRY' in categories:
+                # Extract country names from query for filtering
+                for country in settings.AFRICAN_COUNTRIES:
+                    if country.lower() in query.lower():
+                        filters['country'] = country
+                        break
         
         # Perform vector search
-        results = self.vector_store.search(
-            query=query,
-            n_results=self.max_chunks,
-            filters=filters
-        )
+        try:
+            results = self.vector_store.search(
+                query=query,
+                n_results=self.max_chunks,
+                filters=filters if filters else None
+            )
+        except Exception as e:
+            logger.error(f"Vector search failed: {e}")
+            return []
         
         # Filter by similarity threshold
         filtered_results = [
@@ -161,7 +193,8 @@ class RAGEngine:
                           question: str, 
                           documents: List[Dict[str, Any]], 
                           history: List[Dict[str, str]] = None,
-                          classification: Dict[str, Any] = None) -> str:
+                          classification: Dict[str, Any] = None,
+                          user_context: Dict[str, Any] = None) -> str:
         
         # Prepare context from retrieved documents
         context_parts = []
@@ -187,39 +220,58 @@ class RAGEngine:
             if categories:
                 primary_category = categories[0].lower()
         
+        # Add user context information
+        user_info = ""
+        if user_context:
+            user_details = []
+            if user_context.get('country'):
+                user_details.append(f"User location: {user_context['country']}")
+            if user_context.get('sector'):
+                user_details.append(f"Business sector: {user_context['sector']}")
+            if user_context.get('business_stage'):
+                user_details.append(f"Business stage: {user_context['business_stage']}")
+            
+            if user_details:
+                user_info = f"\nUser Context: {' | '.join(user_details)}"
+        
         # Format the prompt
         rag_prompt = prompt_templates.format_rag_prompt(
-            context=context,
+            context=context + user_info,
             question=question,
             category=primary_category
         )
         
-        # Prepare messages
-        messages = [
-            {"role": "system", "content": prompt_templates.SYSTEM_PROMPT}
-        ]
-        
-        # Add conversation history if available
+        # Build conversation context
+        conversation_context = ""
         if history:
-            for msg in history[-5:]:  # Last 5 exchanges
+            recent_messages = []
+            for msg in history[-3:]:  # Last 3 exchanges
                 if msg.get('role') and msg.get('content'):
-                    messages.append({
-                        "role": msg['role'],
-                        "content": msg['content']
-                    })
+                    role = "Human" if msg['role'] == 'user' else "Assistant"
+                    recent_messages.append(f"{role}: {msg['content'][:200]}")
+            
+            if recent_messages:
+                conversation_context = f"\nRecent conversation:\n" + "\n".join(recent_messages) + "\n"
         
-        messages.append({"role": "user", "content": rag_prompt})
+        # Complete prompt with system instructions and conversation context
+        full_prompt = f"""{prompt_templates.SYSTEM_PROMPT}
+
+{conversation_context}
+
+{rag_prompt}"""
         
-        # Generate response
+        # Generate response using Gemini
         try:
-            # For Gemini, we'll use a simplified approach since it doesn't support chat history like OpenAI
-            full_prompt = f"{prompt_templates.SYSTEM_PROMPT}\n\n{rag_prompt}"
             response = self.model.generate_content(full_prompt)
             
-            return response.text.strip()
-            
+            if response and response.text:
+                return response.text.strip()
+            else:
+                return "I apologize, but I'm having trouble generating a response right now. Please try rephrasing your question."
+                
         except Exception as e:
-            return f"I apologize, but I'm having trouble generating a response right now. Please try again. Error: {str(e)}"
+            logger.error(f"Gemini generation error: {e}")
+            return f"I encountered an error while generating a response. Please try again. Error: {str(e)}"
     
     def _generate_follow_up_questions(self, question: str, answer: str) -> List[str]:
         try:
@@ -229,6 +281,10 @@ class RAGEngine:
             )
             
             response = self.model.generate_content(prompt)
+            
+            if not response or not response.text:
+                return self._get_default_follow_ups()
+            
             result = response.text.strip()
             
             # Parse the response into a list
@@ -241,15 +297,21 @@ class RAGEngine:
                     if cleaned and '?' in cleaned:
                         follow_ups.append(cleaned)
             
-            return follow_ups[:5]  # Return max 5 follow-ups
+            return follow_ups[:5] if follow_ups else self._get_default_follow_ups()
             
-        except Exception:
-            # Fallback follow-up questions
-            return [
-                "Can you tell me more about this topic?",
-                "What are the next steps I should consider?",
-                "Are there any related opportunities or challenges?"
-            ]
+        except Exception as e:
+            logger.warning(f"Follow-up generation failed: {e}")
+            return self._get_default_follow_ups()
+    
+    def _get_default_follow_ups(self) -> List[str]:
+        """Get default follow-up questions"""
+        return [
+            "Can you tell me more about this topic?",
+            "What are the next steps I should consider?",
+            "Are there any related opportunities or challenges?",
+            "How does this apply to my specific situation?",
+            "What resources can help me learn more?"
+        ]
     
     def _format_sources(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         sources = []
@@ -264,7 +326,7 @@ class RAGEngine:
             }
             
             # Add relevant metadata
-            for key in ['source', 'country', 'sector', 'date', 'title']:
+            for key in ['source', 'country', 'sector', 'date', 'title', 'type']:
                 if metadata.get(key):
                     source['metadata'][key] = metadata[key]
             
@@ -284,7 +346,16 @@ class RAGEngine:
         high_quality_count = sum(1 for sim in similarities if sim > 0.8)
         quality_factor = min(high_quality_count / 3, 1.0)  # Normalize to max 1.0
         
-        confidence = (avg_similarity * 0.7) + (quality_factor * 0.3)
+        # Factor in total number of results
+        quantity_factor = min(len(documents) / 5, 1.0)  # Normalize to max 1.0
+        
+        confidence = (avg_similarity * 0.5) + (quality_factor * 0.3) + (quantity_factor * 0.2)
         return round(confidence, 3)
 
-rag_engine = RAGEngine()
+# Global RAG engine instance
+try:
+    rag_engine = RAGEngine()
+    logger.info("RAG Engine initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize RAG Engine: {e}")
+    rag_engine = None

@@ -3,9 +3,9 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 import re
 from datetime import datetime
-import openai
-from config.settings import settings
-import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ScoringResult:
@@ -150,6 +150,13 @@ class StartupReadinessScorer:
         if not data.get('generating_revenue'):
             risks.append("No revenue generation yet")
         
+        if data.get('team_size', 1) == 1:
+            risks.append("Single founder may face execution challenges")
+        
+        sector = data.get('sector', '').lower()
+        if sector in ['cryptocurrency', 'gaming']:
+            risks.append("Sector may face regulatory challenges in some African markets")
+        
         return risks
     
     def _generate_recommendations(self, data: Dict[str, Any], scores: Dict[str, float]) -> List[str]:
@@ -163,6 +170,19 @@ class StartupReadinessScorer:
         
         if scores['market'] < 0.7:
             recommendations.append("Conduct more market research and validation")
+        
+        if scores['product'] < 0.6:
+            recommendations.append("Develop MVP and gather user feedback")
+        
+        if data.get('team_size', 1) == 1:
+            recommendations.append("Consider finding a co-founder or key team member")
+        
+        # Add Africa-specific recommendations
+        if data.get('sector') in ['fintech', 'healthtech']:
+            recommendations.append("Ensure compliance with local financial/health regulations")
+        
+        if not data.get('mobile_first'):
+            recommendations.append("Consider mobile-first approach for African markets")
         
         recommendations.append("Consider applying for startup accelerator programs")
         
@@ -297,6 +317,9 @@ class LoanRiskScorer:
         if 'rural' in location_type:
             risks.append("Rural location may affect income stability")
         
+        if not data.get('mobile_money_history'):
+            risks.append("No mobile money transaction history for monitoring")
+        
         return risks
     
     def _generate_loan_recommendations(self, data: Dict[str, Any], scores: Dict[str, float]) -> List[str]:
@@ -311,13 +334,190 @@ class LoanRiskScorer:
         if data.get('mobile_money_history'):
             recommendations.append("Monitor repayments via mobile money")
         
+        if not data.get('has_bank_account'):
+            recommendations.append("Encourage opening a bank account")
+        
         recommendations.append("Provide financial literacy training")
+        
+        if scores['business_viability'] > 0.7:
+            recommendations.append("Consider business development support")
+        
+        return recommendations
+
+class MarketOpportunityScorer:
+    """Score market opportunities in African context"""
+    
+    def __init__(self):
+        self.african_market_factors = {
+            'mobile_penetration': 0.2,
+            'economic_growth': 0.2,
+            'regulatory_environment': 0.15,
+            'infrastructure': 0.15,
+            'competition_level': 0.15,
+            'local_demand': 0.15
+        }
+    
+    def score_market_opportunity(self, data: Dict[str, Any]) -> ScoringResult:
+        """Score a market opportunity in African context"""
+        
+        component_scores = {
+            'mobile_penetration': self._score_mobile_penetration(data),
+            'economic_growth': self._score_economic_growth(data),
+            'regulatory_environment': self._score_regulatory_environment(data),
+            'infrastructure': self._score_infrastructure(data),
+            'competition_level': self._score_competition_level(data),
+            'local_demand': self._score_local_demand(data)
+        }
+        
+        overall_score = sum(
+            score * self.african_market_factors[component]
+            for component, score in component_scores.items()
+        )
+        
+        risk_factors = self._identify_market_risks(data, component_scores)
+        recommendations = self._generate_market_recommendations(data, component_scores)
+        
+        return ScoringResult(
+            overall_score=overall_score,
+            component_scores=component_scores,
+            risk_factors=risk_factors,
+            recommendations=recommendations,
+            confidence=0.7
+        )
+    
+    def _score_mobile_penetration(self, data: Dict[str, Any]) -> float:
+        # Higher scores for markets with high mobile penetration
+        country = data.get('country', '').lower()
+        
+        high_mobile_countries = ['kenya', 'ghana', 'rwanda', 'uganda']
+        medium_mobile_countries = ['nigeria', 'tanzania', 'senegal']
+        
+        if country in high_mobile_countries:
+            return 0.9
+        elif country in medium_mobile_countries:
+            return 0.7
+        else:
+            return 0.5
+    
+    def _score_economic_growth(self, data: Dict[str, Any]) -> float:
+        # Score based on economic indicators
+        country = data.get('country', '').lower()
+        
+        fast_growing = ['ghana', 'rwanda', 'ivory coast', 'senegal']
+        stable_growth = ['kenya', 'tanzania', 'uganda', 'botswana']
+        
+        if country in fast_growing:
+            return 0.8
+        elif country in stable_growth:
+            return 0.7
+        else:
+            return 0.5
+    
+    def _score_regulatory_environment(self, data: Dict[str, Any]) -> float:
+        country = data.get('country', '').lower()
+        sector = data.get('sector', '').lower()
+        
+        # Countries with good business environments
+        business_friendly = ['rwanda', 'mauritius', 'botswana', 'south africa']
+        
+        base_score = 0.8 if country in business_friendly else 0.6
+        
+        # Sector-specific adjustments
+        if sector == 'fintech':
+            fintech_friendly = ['kenya', 'ghana', 'nigeria', 'south africa']
+            if country in fintech_friendly:
+                base_score += 0.1
+        
+        return min(base_score, 1.0)
+    
+    def _score_infrastructure(self, data: Dict[str, Any]) -> float:
+        country = data.get('country', '').lower()
+        
+        good_infrastructure = ['south africa', 'mauritius', 'botswana', 'namibia']
+        developing_infrastructure = ['ghana', 'kenya', 'rwanda', 'senegal']
+        
+        if country in good_infrastructure:
+            return 0.8
+        elif country in developing_infrastructure:
+            return 0.6
+        else:
+            return 0.4
+    
+    def _score_competition_level(self, data: Dict[str, Any]) -> float:
+        # Lower competition = higher score
+        sector = data.get('sector', '').lower()
+        country = data.get('country', '').lower()
+        
+        saturated_markets = {
+            'fintech': ['kenya', 'nigeria', 'south africa'],
+            'e-commerce': ['nigeria', 'south africa', 'egypt'],
+            'ride-sharing': ['nigeria', 'kenya', 'south africa']
+        }
+        
+        if sector in saturated_markets and country in saturated_markets[sector]:
+            return 0.4  # High competition
+        else:
+            return 0.7  # Lower competition
+    
+    def _score_local_demand(self, data: Dict[str, Any]) -> float:
+        # Score based on local market demand indicators
+        sector = data.get('sector', '').lower()
+        
+        high_demand_sectors = ['healthtech', 'edtech', 'agritech', 'fintech']
+        moderate_demand_sectors = ['e-commerce', 'logistics', 'energy']
+        
+        if sector in high_demand_sectors:
+            return 0.8
+        elif sector in moderate_demand_sectors:
+            return 0.6
+        else:
+            return 0.4
+    
+    def _identify_market_risks(self, data: Dict[str, Any], scores: Dict[str, float]) -> List[str]:
+        risks = []
+        
+        if scores['regulatory_environment'] < 0.6:
+            risks.append("Regulatory uncertainty may impact business operations")
+        
+        if scores['infrastructure'] < 0.5:
+            risks.append("Poor infrastructure may limit business scalability")
+        
+        if scores['competition_level'] < 0.5:
+            risks.append("High competition may require significant marketing investment")
+        
+        country = data.get('country', '').lower()
+        if country in ['somalia', 'south sudan', 'central african republic']:
+            risks.append("Political instability may affect business environment")
+        
+        return risks
+    
+    def _generate_market_recommendations(self, data: Dict[str, Any], scores: Dict[str, float]) -> List[str]:
+        recommendations = []
+        
+        if scores['mobile_penetration'] > 0.7:
+            recommendations.append("Leverage mobile-first strategy for market entry")
+        
+        if scores['infrastructure'] < 0.6:
+            recommendations.append("Consider partnerships to overcome infrastructure limitations")
+        
+        if scores['competition_level'] < 0.6:
+            recommendations.append("Focus on differentiation and niche market entry")
+        
+        if scores['regulatory_environment'] > 0.7:
+            recommendations.append("Fast-track market entry while regulatory environment is favorable")
+        
+        recommendations.append("Conduct thorough local market research before launch")
         
         return recommendations
 
 def create_scoring_engine() -> Dict[str, Any]:
     """Create and return scoring engine components"""
-    return {
-        'startup_scorer': StartupReadinessScorer(),
-        'loan_scorer': LoanRiskScorer()
-    }
+    try:
+        return {
+            'startup_scorer': StartupReadinessScorer(),
+            'loan_scorer': LoanRiskScorer(),
+            'market_scorer': MarketOpportunityScorer()
+        }
+    except Exception as e:
+        logger.error(f"Failed to create scoring engines: {e}")
+        return {}

@@ -5,12 +5,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from twilio.rest import Client
-from langchain.memory import ConversationBufferWindowMemory
-from langchain.schema import BaseMessage, HumanMessage, AIMessage
-from config.settings import settings
-from api.rag_engine import rag_engine
-from api.scoring_engine import create_scoring_engine
 import logging
+from config.settings import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,14 +15,35 @@ logger = logging.getLogger(__name__)
 class WhatsAppBusinessAgent:
     def __init__(self):
         # Initialize Gemini
+        if not settings.GOOGLE_API_KEY:
+            raise ValueError("Google API key not configured for WhatsApp agent")
+            
         genai.configure(api_key=settings.GOOGLE_API_KEY)
-        self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
         
-        self.twilio_client = Client(
-            settings.TWILIO_ACCOUNT_SID,
-            settings.TWILIO_AUTH_TOKEN
+        # Use mobile-optimized Gemini model for faster responses
+        self.gemini_model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash',  # Faster model for mobile
+            generation_config=settings.get_mobile_gemini_config()
         )
-        self.scoring_engines = create_scoring_engine()
+        
+        # Initialize Twilio client
+        whatsapp_config = settings.get_whatsapp_config()
+        if whatsapp_config:
+            self.twilio_client = Client(
+                whatsapp_config['account_sid'],
+                whatsapp_config['auth_token']
+            )
+        else:
+            self.twilio_client = None
+            logger.warning("Twilio not configured - WhatsApp features will be limited")
+        
+        # Try to import scoring engines
+        try:
+            from api.scoring_engine import create_scoring_engine
+            self.scoring_engines = create_scoring_engine()
+        except ImportError:
+            logger.warning("Scoring engines not available")
+            self.scoring_engines = None
         
         # Language support for Ghana
         self.supported_languages = {
@@ -214,7 +231,7 @@ Type one of the locations above."""
             session['current_flow'] = 'general_advice'
             session['flow_state'] = {}
             
-            # Generate assessment using scoring engine
+            # Generate assessment using scoring engine or Gemini
             assessment = self._generate_business_assessment(session['business_data'])
             
             return assessment
@@ -237,26 +254,16 @@ Reply with a number (1-4) or keyword."""
         context = session['funding_context']
         
         if message.upper() in ['1', 'FIND']:
-            # Use RAG to find relevant funding
+            # Use Gemini to provide funding guidance
             business_info = session.get('business_data', {})
             sector = business_info.get('sector', 'general')
             
-            query = f"funding opportunities for {sector} businesses in Ghana"
-            rag_response = rag_engine.query(query, user_context={'country': 'Ghana'})
-            
-            funding_info = rag_response.get('answer', 'No specific funding found.')
-            
-            # Optimize for WhatsApp
-            summary = self._summarize_for_whatsapp(funding_info)
+            funding_response = self._get_gemini_funding_advice(sector)
             
             # Reset context
             session.pop('funding_context', None)
             
-            return f"""🎯 Funding Options for You:
-
-{summary}
-
-💡 Want more details on any option? Ask me about specific funders or types."""
+            return funding_response
 
         elif message.upper() in ['2', 'APPLY']:
             session.pop('funding_context', None)
@@ -305,25 +312,15 @@ Need help calculating? Share your monthly costs."""
         else:
             # Handle free-form funding questions
             session.pop('funding_context', None)
-            
-            # Use RAG for specific questions
-            rag_response = rag_engine.query(
-                f"funding advice: {message}",
-                user_context={'country': 'Ghana'}
-            )
-            
-            return self._summarize_for_whatsapp(rag_response.get('answer', 'Let me help with funding questions. Try: funding options, how to apply, or investor requirements.'))
+            return self._get_gemini_response(f"funding advice for Ghana business: {message}")
 
     def _regulatory_help_flow(self, from_number: str, message: str, session: Dict[str, Any]) -> str:
         """Business registration and regulatory guidance"""
         
-        # Use RAG to get regulatory information
-        rag_response = rag_engine.query(
-            f"business registration Ghana: {message}",
-            user_context={'country': 'Ghana'}
+        # Use Gemini to get regulatory information for Ghana
+        regulatory_response = self._get_gemini_response(
+            f"business registration and regulatory requirements in Ghana: {message}"
         )
-        
-        regulatory_info = rag_response.get('answer', '')
         
         # Add Ghana-specific quick tips
         if 'register' in message.lower():
@@ -335,20 +332,17 @@ Need help calculating? Share your monthly costs."""
 • Takes 3-5 business days
 • Get TIN from GRA after registration"""
             
-            regulatory_info += quick_tips
+            regulatory_response += quick_tips
         
-        return self._summarize_for_whatsapp(regulatory_info)
+        return self._summarize_for_whatsapp(regulatory_response)
 
     def _market_research_flow(self, from_number: str, message: str, session: Dict[str, Any]) -> str:
         """Market research guidance"""
         
-        # Use RAG for market insights
-        rag_response = rag_engine.query(
-            f"Ghana market research: {message}",
-            user_context={'country': 'Ghana'}
+        # Use Gemini for market insights
+        market_response = self._get_gemini_response(
+            f"market research guidance for Ghana business: {message}"
         )
-        
-        market_info = rag_response.get('answer', '')
         
         # Add actionable research steps
         research_tips = """
@@ -360,7 +354,7 @@ Need help calculating? Share your monthly costs."""
 4. Use Ghana Statistical Service data
 5. Join relevant WhatsApp/Facebook groups"""
         
-        return self._summarize_for_whatsapp(market_info + research_tips)
+        return self._summarize_for_whatsapp(market_response + research_tips)
 
     def _general_advice_flow(self, from_number: str, message: str, session: Dict[str, Any]) -> str:
         """Handle general business questions"""
@@ -392,64 +386,111 @@ Need help calculating? Share your monthly costs."""
         elif 'help' in message_lower:
             return self._get_help_message()
         
-        # General RAG query
+        # General Gemini query
         else:
-            rag_response = rag_engine.query(
-                message,
-                conversation_history=session.get('conversation_history', []),
-                user_context={'country': 'Ghana'}
-            )
+            return self._get_gemini_response(f"Ghana business advice: {message}")
+
+    def _get_gemini_response(self, prompt: str) -> str:
+        """Get response from Gemini with context for Ghana business"""
+        try:
+            enhanced_prompt = f"""You are UbuntuAI, an expert business advisor for African entrepreneurs, especially in Ghana. 
+
+Context: You're helping a Ghanaian entrepreneur via WhatsApp. Keep responses:
+- Under 600 characters for mobile
+- Practical and actionable
+- Specific to Ghana/Africa when possible
+- Encouraging but realistic
+
+Question: {prompt}
+
+Response:"""
+
+            response = self.gemini_model.generate_content(enhanced_prompt)
             
-            response = rag_response.get('answer', 'I understand you have a business question. Could you be more specific?')
-            return self._summarize_for_whatsapp(response)
+            if response and response.text:
+                return self._summarize_for_whatsapp(response.text)
+            else:
+                return "I'm having trouble generating a response right now. Please try rephrasing your question."
+                
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            return "Sorry, I'm experiencing technical difficulties. Please try again shortly."
+
+    def _get_gemini_funding_advice(self, sector: str) -> str:
+        """Get funding advice from Gemini"""
+        prompt = f"""List 3-4 funding sources for a {sector} business in Ghana. For each, include:
+- Name of funding source
+- Type of funding
+- Typical amount range in GHS
+- Key requirement
+
+Keep response under 500 characters, mobile-friendly format."""
+
+        return self._get_gemini_response(prompt)
 
     def _generate_business_assessment(self, business_data: Dict[str, Any]) -> str:
-        """Generate business assessment using scoring engine"""
+        """Generate business assessment using Gemini or scoring engine"""
         
-        # Transform WhatsApp data to scoring format
-        scoring_data = {
-            'business_description': business_data.get('description', ''),
-            'sector': business_data.get('sector', ''),
-            'team_size': business_data.get('team_size', 1),
-            'product_stage': self._map_stage_to_product_stage(business_data.get('stage', 'idea')),
-            'customer_count': business_data.get('customers', 0),
-            'generating_revenue': business_data.get('revenue', False),
-            'local_team_members': True,  # Assume true for Ghana-based businesses
-            'mobile_first': True,  # Assume true for Ghana
-            'local_market_knowledge': True
-        }
+        if self.scoring_engines:
+            # Use scoring engine if available
+            try:
+                scoring_data = {
+                    'business_description': business_data.get('description', ''),
+                    'sector': business_data.get('sector', ''),
+                    'team_size': business_data.get('team_size', 1),
+                    'product_stage': self._map_stage_to_product_stage(business_data.get('stage', 'idea')),
+                    'customer_count': business_data.get('customers', 0),
+                    'generating_revenue': business_data.get('revenue', False),
+                    'local_team_members': True,
+                    'mobile_first': True,
+                    'local_market_knowledge': True
+                }
+                
+                scorer = self.scoring_engines['startup_scorer']
+                result = scorer.score_startup(scoring_data)
+                
+                return self._format_assessment_result(result)
+                
+            except Exception as e:
+                logger.error(f"Scoring engine error: {e}")
+                # Fall back to Gemini
         
-        # Get score
-        scorer = self.scoring_engines['startup_scorer']
-        result = scorer.score_startup(scoring_data)
-        
-        # Format for WhatsApp
+        # Use Gemini for assessment
+        prompt = f"""Assess this Ghana business and give a score out of 10 with brief advice:
+
+Business: {business_data.get('description', 'N/A')}
+Sector: {business_data.get('sector', 'N/A')}
+Team: {business_data.get('team_size', 1)} people
+Stage: {business_data.get('stage', 'idea')}
+Customers: {business_data.get('customers', 0)}
+Revenue: {'Yes' if business_data.get('revenue') else 'No'}
+Location: {business_data.get('location', 'Ghana')}
+
+Give:
+1. Score /10
+2. Top strength
+3. Main weakness
+4. Next step
+
+Keep under 400 characters."""
+
+        return self._get_gemini_response(prompt)
+
+    def _format_assessment_result(self, result) -> str:
+        """Format scoring engine result for WhatsApp"""
         score_emoji = "🟢" if result.overall_score > 0.7 else "🟡" if result.overall_score > 0.5 else "🔴"
         
         assessment = f"""📊 Your Business Assessment {score_emoji}
 
-Overall Score: {result.overall_score}/1.0
+Overall Score: {result.overall_score:.1f}/1.0
 
-🎯 Strengths:"""
-        
-        # Show top 2 strengths
-        sorted_scores = sorted(result.component_scores.items(), key=lambda x: x[1], reverse=True)
-        for component, score in sorted_scores[:2]:
-            if score > 0.6:
-                assessment += f"\n• {component.replace('_', ' ').title()}: {score:.1f}/1.0"
-        
-        assessment += "\n\n⚠️ Areas to Improve:"
-        
-        # Show top 2 weaknesses
-        for component, score in sorted_scores[-2:]:
-            if score < 0.6:
-                assessment += f"\n• {component.replace('_', ' ').title()}: {score:.1f}/1.0"
-        
-        # Add top recommendation
-        if result.recommendations:
-            assessment += f"\n\n💡 Next Step:\n{result.recommendations[0]}"
-        
-        assessment += "\n\nWant detailed advice on any area? Just ask!"
+🎯 Top Strength: {max(result.component_scores, key=result.component_scores.get).replace('_', ' ').title()}
+
+⚠️ Area to Improve: {min(result.component_scores, key=result.component_scores.get).replace('_', ' ').title()}
+
+💡 Next Step: {result.recommendations[0] if result.recommendations else 'Focus on customer validation'}
+
+Want detailed advice? Just ask!"""
         
         return assessment
 
@@ -466,13 +507,14 @@ Overall Score: {result.overall_score}/1.0
     def _optimize_for_low_bandwidth(self, response: str) -> str:
         """Optimize response for low bandwidth/data usage"""
         
-        # Keep responses under 1600 characters (WhatsApp limit)
-        if len(response) > 1600:
-            response = response[:1580] + "...\n\nType 'more' for details"
+        # Keep responses under WhatsApp limit
+        max_length = settings.WHATSAPP_MAX_MESSAGE_LENGTH
+        if len(response) > max_length:
+            response = response[:max_length-20] + "...\n\nType 'more' for details"
         
         # Remove excessive formatting
-        response = re.sub(r'\*\*\*+', '**', response)  # Reduce multiple bold markers
-        response = re.sub(r'\n\n\n+', '\n\n', response)  # Reduce multiple line breaks
+        response = re.sub(r'\*\*\*+', '**', response)
+        response = re.sub(r'\n\n\n+', '\n\n', response)
         
         # Replace long URLs with placeholders
         response = re.sub(r'https?://[^\s]+', '[link]', response)
@@ -482,29 +524,30 @@ Overall Score: {result.overall_score}/1.0
     def _summarize_for_whatsapp(self, long_text: str) -> str:
         """Summarize long responses for WhatsApp"""
         
-        if len(long_text) < 800:
+        max_chars = 600
+        if len(long_text) < max_chars:
             return long_text
         
-        # Use OpenAI to summarize for WhatsApp
+        # Use Gemini to summarize
         try:
-            summary_prompt = f"""Summarize this business advice for WhatsApp (max 600 chars, mobile-friendly, Ghana context):
+            summary_prompt = f"""Summarize this for WhatsApp (max {max_chars} chars, mobile-friendly, Ghana context):
 
 {long_text[:2000]}
 
-Make it actionable and keep key numbers/links."""
+Keep key info and make actionable."""
             
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": summary_prompt}],
-                max_tokens=200,
-                temperature=0.3
-            )
+            response = self.gemini_model.generate_content(summary_prompt)
             
-            return response.choices[0].message.content.strip()
-            
-        except Exception:
+            if response and response.text:
+                return response.text.strip()[:max_chars]
+            else:
+                # Fallback: simple truncation
+                return long_text[:max_chars] + "...\n\nType 'more info' for details"
+                
+        except Exception as e:
+            logger.error(f"Summarization error: {e}")
             # Fallback: simple truncation
-            return long_text[:600] + "...\n\nType 'more info' for details"
+            return long_text[:max_chars] + "...\n\nType 'more info' for details"
 
     def _get_welcome_message(self) -> str:
         """Get welcome message for new users"""
@@ -567,47 +610,64 @@ For urgent help, you can also visit ghana.gov.gh for business registration or co
 
 # Flask app for WhatsApp webhook
 app = Flask(__name__)
-whatsapp_agent = WhatsAppBusinessAgent()
+
+# Initialize WhatsApp agent
+try:
+    whatsapp_agent = WhatsAppBusinessAgent()
+    logger.info("WhatsApp agent initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize WhatsApp agent: {e}")
+    whatsapp_agent = None
 
 @app.route("/whatsapp", methods=['POST'])
 def whatsapp_webhook():
     """Handle incoming WhatsApp messages"""
+    if not whatsapp_agent:
+        return jsonify({"error": "WhatsApp agent not available"}), 503
+        
     try:
         from_number = request.values.get('From', '').replace('whatsapp:', '')
         message_body = request.values.get('Body', '').strip()
         
         if not from_number or not message_body:
-            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+            return jsonify({"error": "Missing required fields"}), 400
         
         # Get response from agent
         response = whatsapp_agent.handle_message(from_number, message_body)
         
-        # Send response via Twilio
-        to_number = f"whatsapp:{from_number}"
-        
-        whatsapp_agent.twilio_client.messages.create(
-            body=response,
-            from_=f"whatsapp:{settings.TWILIO_WHATSAPP_NUMBER}",
-            to=to_number
-        )
+        # Send response via Twilio if configured
+        if whatsapp_agent.twilio_client:
+            to_number = f"whatsapp:{from_number}"
+            
+            whatsapp_agent.twilio_client.messages.create(
+                body=response,
+                from_=f"whatsapp:{settings.TWILIO_WHATSAPP_NUMBER}",
+                to=to_number
+            )
         
         return jsonify({"status": "success"}), 200
         
     except Exception as e:
         logger.error(f"WhatsApp webhook error: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/health", methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()}), 200
+    return jsonify({
+        "status": "healthy", 
+        "timestamp": datetime.now().isoformat(),
+        "agent_available": whatsapp_agent is not None
+    }), 200
 
-# Cleanup task (run periodically)
 @app.route("/cleanup", methods=['POST'])
 def cleanup_sessions():
     """Manual session cleanup"""
-    whatsapp_agent.cleanup_old_sessions()
-    return jsonify({"status": "cleaned"}), 200
+    if whatsapp_agent:
+        whatsapp_agent.cleanup_old_sessions()
+        return jsonify({"status": "cleaned"}), 200
+    else:
+        return jsonify({"error": "Agent not available"}), 503
 
 if __name__ == "__main__":
     app.run(debug=False, host='0.0.0.0', port=5000)

@@ -9,8 +9,8 @@ import google.generativeai as genai
 import numpy as np
 import logging
 from typing import List, Dict, Any, Optional
-import tiktoken
 import time
+import re
 from config.settings import settings
 
 # Configure logging
@@ -22,13 +22,14 @@ class EmbeddingError(Exception):
 
 class EmbeddingService:
     """
-    Service for creating and managing text embeddings using OpenAI's API.
+    Service for creating and managing text embeddings using Google Gemini API.
     
     This service handles:
-    - Text tokenization and truncation
+    - Text preprocessing and truncation
     - Embedding creation with retry logic
     - Batch processing for efficiency
     - Error handling and logging
+    - Multiple task types for different use cases
     """
     
     def __init__(self):
@@ -38,11 +39,19 @@ class EmbeddingService:
                 raise EmbeddingError("Google Gemini API key not configured")
                 
             genai.configure(api_key=settings.GOOGLE_API_KEY)
-            self.model = genai.GenerativeModel('gemini-1.5-pro')
-            self.encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-            self.max_tokens = 8191  # Gemini model limit
             
-            logger.info(f"Embedding service initialized with model: {self.model}")
+            # Get configuration from settings
+            self.model_name = settings.EMBEDDING_MODEL
+            self.dimensions = settings.EMBEDDING_DIMENSIONS
+            self.task_type = settings.EMBEDDING_TASK_TYPE
+            self.max_input_tokens = settings.MAX_INPUT_TOKENS
+            
+            # Rough character to token ratio for Gemini (approximately 1 token = 4 characters)
+            self.char_to_token_ratio = 4
+            self.max_input_chars = self.max_input_tokens * self.char_to_token_ratio
+            
+            logger.info(f"Gemini embedding service initialized with model: {self.model_name}")
+            logger.info(f"Dimensions: {self.dimensions}, Task type: {self.task_type}")
             
         except Exception as e:
             logger.error(f"Failed to initialize embedding service: {e}")
@@ -50,26 +59,25 @@ class EmbeddingService:
         
     def count_tokens(self, text: str) -> int:
         """
-        Count the number of tokens in a text string.
+        Estimate the number of tokens in a text string.
         
         Args:
             text: Input text to count tokens for
             
         Returns:
-            Number of tokens in the text
-            
-        Raises:
-            EmbeddingError: If token counting fails
+            Estimated number of tokens in the text
         """
         try:
             if not isinstance(text, str):
                 raise EmbeddingError("Input must be a string")
-                
-            return len(self.encoding.encode(text))
+            
+            # Simple estimation: 1 token ≈ 4 characters for most languages
+            # This is a rough estimate since Gemini uses its own tokenizer
+            return len(text) // self.char_to_token_ratio
             
         except Exception as e:
             logger.error(f"Error counting tokens: {e}")
-            raise EmbeddingError(f"Token counting failed: {e}")
+            return len(text) // 4  # Fallback estimation
     
     def truncate_text(self, text: str, max_tokens: Optional[int] = None) -> str:
         """
@@ -81,69 +89,105 @@ class EmbeddingService:
             
         Returns:
             Truncated text that fits within token limits
-            
-        Raises:
-            EmbeddingError: If truncation fails
         """
         try:
             if not isinstance(text, str):
                 raise EmbeddingError("Input must be a string")
                 
             if max_tokens is None:
-                max_tokens = self.max_tokens
+                max_tokens = self.max_input_tokens
                 
-            tokens = self.encoding.encode(text)
-            if len(tokens) <= max_tokens:
+            # Clean and normalize text
+            text = self._clean_text(text)
+            
+            estimated_tokens = self.count_tokens(text)
+            if estimated_tokens <= max_tokens:
                 return text
                 
-            truncated_tokens = tokens[:max_tokens]
-            truncated_text = self.encoding.decode(truncated_tokens)
+            # Truncate to estimated character limit
+            max_chars = max_tokens * self.char_to_token_ratio
+            truncated_text = text[:max_chars]
             
-            if len(tokens) > max_tokens:
-                logger.warning(f"Text truncated from {len(tokens)} to {max_tokens} tokens")
+            # Try to cut at sentence boundary
+            truncated_text = self._truncate_at_sentence_boundary(truncated_text)
+            
+            if len(text) > len(truncated_text):
+                logger.warning(f"Text truncated from {len(text)} to {len(truncated_text)} characters")
                 
             return truncated_text
             
         except Exception as e:
             logger.error(f"Error truncating text: {e}")
-            raise EmbeddingError(f"Text truncation failed: {e}")
+            # Fallback: return first portion of text
+            fallback_chars = (max_tokens or 2000) * 4
+            return text[:fallback_chars]
     
-    def create_embedding(self, text: str, retry_count: int = 3) -> Optional[List[float]]:
+    def _clean_text(self, text: str) -> str:
+        """Clean and normalize text for embedding"""
+        # Remove excessive whitespace
+        text = re.sub(r'\s+', ' ', text.strip())
+        
+        # Remove control characters but keep newlines
+        text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+        
+        return text
+    
+    def _truncate_at_sentence_boundary(self, text: str) -> str:
+        """Truncate text at the last complete sentence"""
+        sentence_endings = ['. ', '! ', '? ', '.\n', '!\n', '?\n']
+        
+        for ending in sentence_endings:
+            last_index = text.rfind(ending)
+            if last_index > len(text) * 0.8:  # Only if we're keeping at least 80% of text
+                return text[:last_index + len(ending)]
+        
+        return text
+    
+    def create_embedding(self, text: str, task_type: Optional[str] = None, retry_count: int = 3) -> Optional[List[float]]:
         """
         Create an embedding for a single text string using Gemini.
         
         Args:
             text: Input text to create embedding for
+            task_type: Task type for embedding ("RETRIEVAL_QUERY", "RETRIEVAL_DOCUMENT", "SEMANTIC_SIMILARITY", etc.)
             retry_count: Number of retry attempts on failure
             
         Returns:
             List of embedding values or None if failed
-            
-        Raises:
-            EmbeddingError: If all retry attempts fail
         """
         if not text or not text.strip():
             logger.warning("Empty text provided for embedding")
             return None
             
         try:
-            text = self.truncate_text(text)
+            # Use provided task type or default
+            embedding_task_type = task_type or self.task_type
+            
+            # Truncate text to fit within limits
+            processed_text = self.truncate_text(text)
             
             for attempt in range(retry_count):
                 try:
-                    # Use Gemini to generate a semantic representation
-                    prompt = f"Analyze the following text and provide a semantic analysis that captures its key concepts, themes, and meaning:\n\n{text}\n\nProvide a structured analysis that can be used for similarity matching."
+                    # Create embedding using Gemini
+                    result = genai.embed_content(
+                        model=self.model_name,
+                        content=processed_text,
+                        task_type=embedding_task_type,
+                        output_dimensionality=self.dimensions if self.dimensions < 3072 else None
+                    )
                     
-                    response = self.model.generate_content(prompt)
-                    
-                    if not response or not response.text:
+                    if not result or 'embedding' not in result:
                         raise EmbeddingError("Empty response from Gemini API")
                     
-                    # Convert the semantic analysis to a numerical embedding
-                    embedding = self._text_to_embedding(response.text)
+                    embedding = result['embedding']
                     
                     if not embedding or len(embedding) == 0:
                         raise EmbeddingError("Empty embedding generated")
+                    
+                    # Validate embedding dimensions
+                    expected_dims = self.dimensions
+                    if len(embedding) != expected_dims:
+                        logger.warning(f"Embedding dimension mismatch: expected {expected_dims}, got {len(embedding)}")
                         
                     logger.debug(f"Successfully created Gemini embedding with {len(embedding)} dimensions")
                     return embedding
@@ -164,81 +208,17 @@ class EmbeddingService:
             logger.error(f"Fatal error in create_embedding: {e}")
             raise EmbeddingError(f"Embedding creation failed: {e}")
     
-    def _text_to_embedding(self, text: str) -> List[float]:
-        """
-        Convert Gemini's semantic analysis to a numerical embedding vector.
-        Creates a more semantically meaningful representation than simple hashing.
-        
-        Args:
-            text: Semantic analysis text from Gemini
-            
-        Returns:
-            List of numerical values representing the text (1536 dimensions)
-        """
-        try:
-            import hashlib
-            import re
-            
-            # Clean and normalize the text
-            clean_text = re.sub(r'[^\w\s]', '', text.lower())
-            words = clean_text.split()
-            
-            # Create a more sophisticated embedding based on word frequencies and patterns
-            embedding = []
-            
-            # Use word frequency analysis
-            word_freq = {}
-            for word in words:
-                if len(word) > 2:  # Skip very short words
-                    word_freq[word] = word_freq.get(word, 0) + 1
-            
-            # Create base embedding from word frequencies
-            for word, freq in sorted(word_freq.items()):
-                if len(embedding) >= 512:  # Use first 512 dimensions for word-based features
-                    break
-                # Create hash-based value for each word
-                word_hash = hashlib.md5(word.encode()).hexdigest()
-                for i in range(0, min(8, len(word_hash)), 2):
-                    if len(embedding) >= 512:
-                        break
-                    hex_pair = word_hash[i:i+2]
-                    embedding.append((float(int(hex_pair, 16)) / 255.0) * (freq / max(word_freq.values())))
-            
-            # Fill remaining dimensions with semantic features
-            remaining_dims = 1536 - len(embedding)
-            if remaining_dims > 0:
-                # Use text length, complexity, and other features
-                text_hash = hashlib.md5(text.encode()).hexdigest()
-                for i in range(0, min(remaining_dims * 2, len(text_hash)), 2):
-                    if len(embedding) >= 1536:
-                        break
-                    hex_pair = text_hash[i:i+2]
-                    embedding.append(float(int(hex_pair, 16)) / 255.0)
-                
-                # Pad to exactly 1536 dimensions
-                while len(embedding) < 1536:
-                    embedding.append(0.0)
-            
-            return embedding[:1536]
-            
-        except Exception as e:
-            logger.error(f"Error converting text to embedding: {e}")
-            # Return zero vector as fallback
-            return [0.0] * 1536
-    
-    def create_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[Optional[List[float]]]:
+    def create_embeddings_batch(self, texts: List[str], task_type: Optional[str] = None, batch_size: int = 20) -> List[Optional[List[float]]]:
         """
         Create embeddings for multiple texts in batches.
         
         Args:
             texts: List of input texts
+            task_type: Task type for embeddings
             batch_size: Number of texts to process in each batch
             
         Returns:
             List of embeddings (same order as input texts)
-            
-        Raises:
-            EmbeddingError: If batch processing fails
         """
         if not texts:
             logger.warning("Empty text list provided for batch embedding")
@@ -256,37 +236,20 @@ class EmbeddingService:
                 
                 logger.debug(f"Processing batch {batch_num}/{total_batches}")
                 
-                # Filter and truncate texts
-                truncated_batch = []
-                for text in batch:
-                    if text and text.strip():
-                        truncated_batch.append(self.truncate_text(text))
-                    else:
-                        truncated_batch.append("")
-                
                 try:
-                    # Only send non-empty texts to API
-                    valid_texts = [t for t in truncated_batch if t.strip()]
-                    
-                    if not valid_texts:
-                        # All texts in batch are empty
-                        embeddings.extend([None] * len(batch))
-                        continue
-                    
-                    # Process each text individually for Gemini
+                    # Process each text individually (Gemini embed_content processes one at a time)
                     batch_embeddings = []
-                    for text in truncated_batch:
-                        if text.strip():
+                    for text in batch:
+                        if text and text.strip():
                             try:
-                                embedding = self.create_embedding(text)
+                                embedding = self.create_embedding(text, task_type)
+                                batch_embeddings.append(embedding)
                                 if embedding:
-                                    batch_embeddings.append(embedding)
-                                    logger.debug(f"Successfully created Gemini embedding for text: {text[:50]}...")
+                                    logger.debug(f"Successfully created embedding for text: {text[:50]}...")
                                 else:
-                                    batch_embeddings.append(None)
-                                    logger.warning(f"Failed to create Gemini embedding for text: {text[:50]}...")
+                                    logger.warning(f"Failed to create embedding for text: {text[:50]}...")
                             except Exception as e:
-                                logger.error(f"Failed to create Gemini embedding for text: {e}")
+                                logger.error(f"Failed to create embedding for text: {e}")
                                 batch_embeddings.append(None)
                         else:
                             batch_embeddings.append(None)
@@ -311,6 +274,30 @@ class EmbeddingService:
             logger.error(f"Fatal error in batch embedding: {e}")
             raise EmbeddingError(f"Batch embedding failed: {e}")
     
+    def create_query_embedding(self, query: str) -> Optional[List[float]]:
+        """
+        Create an embedding optimized for search queries.
+        
+        Args:
+            query: Search query text
+            
+        Returns:
+            Query embedding or None if failed
+        """
+        return self.create_embedding(query, task_type="RETRIEVAL_QUERY")
+    
+    def create_document_embedding(self, document: str) -> Optional[List[float]]:
+        """
+        Create an embedding optimized for documents.
+        
+        Args:
+            document: Document text
+            
+        Returns:
+            Document embedding or None if failed
+        """
+        return self.create_embedding(document, task_type="RETRIEVAL_DOCUMENT")
+    
     def cosine_similarity(self, a: List[float], b: List[float]) -> float:
         """
         Calculate cosine similarity between two embedding vectors.
@@ -320,10 +307,7 @@ class EmbeddingService:
             b: Second embedding vector
             
         Returns:
-            Cosine similarity score between 0 and 1
-            
-        Raises:
-            EmbeddingError: If similarity calculation fails
+            Cosine similarity score between -1 and 1
         """
         try:
             if not a or not b:
@@ -345,8 +329,8 @@ class EmbeddingService:
                 
             similarity = float(dot_product / (norm_a * norm_b))
             
-            # Ensure result is in valid range
-            similarity = max(0.0, min(1.0, similarity))
+            # Clamp to valid range
+            similarity = max(-1.0, min(1.0, similarity))
             
             return similarity
             
@@ -367,9 +351,6 @@ class EmbeddingService:
             
         Returns:
             List of search results with indices and similarity scores
-            
-        Raises:
-            EmbeddingError: If search fails
         """
         try:
             if not query_embedding:
@@ -460,7 +441,7 @@ class BusinessContextEmbeddings:
     Enhanced embedding service that incorporates business context into embeddings.
     
     This service adds metadata context to improve embedding quality for
-    business-specific use cases.
+    business-specific use cases in the African context.
     """
     
     def __init__(self, embedding_service: EmbeddingService):
@@ -486,12 +467,12 @@ class BusinessContextEmbeddings:
         """
         try:
             enhanced_text = self._enhance_text_with_context(text, metadata)
-            return self.embedding_service.create_embedding(enhanced_text)
+            return self.embedding_service.create_document_embedding(enhanced_text)
             
         except Exception as e:
             logger.error(f"Error creating context-aware embedding: {e}")
             # Fallback to basic embedding
-            return self.embedding_service.create_embedding(text)
+            return self.embedding_service.create_document_embedding(text)
     
     def _enhance_text_with_context(self, text: str, metadata: Dict[str, Any]) -> str:
         """
@@ -516,12 +497,15 @@ class BusinessContextEmbeddings:
                 'sector': 'Business Sector', 
                 'funding_stage': 'Funding Stage',
                 'source_type': 'Source Type',
-                'date': 'Date'
+                'date': 'Date',
+                'type': 'Content Type'
             }
             
             for field, label in context_fields.items():
                 value = metadata.get(field)
                 if value and str(value).strip():
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value)
                     enhancements.append(f"{label}: {value}")
             
             if enhancements:
