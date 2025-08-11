@@ -126,8 +126,9 @@ class Settings:
             "Mining", "Oil & Gas", "Water", "Waste Management"
         ]
         
+        # Updated FUNDING_STAGES to include 'Idea'
         self.FUNDING_STAGES = [
-            "Pre-seed", "Seed", "Series A", "Series B", "Series C",
+            "Idea", "Pre-seed", "Seed", "Series A", "Series B", "Series C",
             "Growth", "Bridge", "Mezzanine", "IPO", "Grant", "Government"
         ]
     

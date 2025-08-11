@@ -151,7 +151,7 @@ def initialize_session_state():
             'name': '',
             'country': 'Ghana',
             'sector': 'Fintech',
-            'business_stage': 'Idea',
+            'business_stage': 'Pre-seed',  # Changed from 'Idea' to 'Pre-seed'
             'team_size': 1,
             'experience_level': 'First-time entrepreneur'
         }
@@ -217,10 +217,17 @@ def display_user_profile():
                 help="Your industry focus"
             )
             
+            # Fix the business stage selection
+            current_stage = st.session_state.user_profile.get('business_stage', 'Pre-seed')
+            # Ensure the current stage exists in the list, if not use Pre-seed
+            if current_stage not in settings.FUNDING_STAGES:
+                current_stage = 'Pre-seed'
+                st.session_state.user_profile['business_stage'] = current_stage
+            
             st.session_state.user_profile['business_stage'] = st.selectbox(
                 "Business Stage",
                 options=settings.FUNDING_STAGES,
-                index=settings.FUNDING_STAGES.index(st.session_state.user_profile.get('business_stage', 'Pre-seed')),
+                index=settings.FUNDING_STAGES.index(current_stage),
                 help="Current stage of your business"
             )
             
