@@ -1,376 +1,702 @@
-import google.generativeai as genai
-from typing import List, Dict, Any, Optional
-from api.vector_store import vector_store
+"""
+Modern RAG Engine for UbuntuAI using LangChain
+Implements self-reflective, corrective RAG with multi-provider support
+"""
+
+import logging
+from typing import Dict, List, Any, Optional, AsyncGenerator
+import json
+from datetime import datetime
+import asyncio
+
+# LangChain imports
+from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+from langchain.schema.runnable import RunnableConfig
+
+# LangSmith integration
+try:
+    from langsmith import trace
+    from langfuse import Langfuse
+    MONITORING_AVAILABLE = True
+except ImportError:
+    MONITORING_AVAILABLE = False
+    def trace(name):
+        def decorator(func):
+            return func
+        return decorator
+
 from config.settings import settings
 from config.prompts import prompt_templates
+from api.llm_providers import llm_manager
+from api.retrieval import get_contextual_retriever, initialize_retrieval_system
+from api.evaluation import ragas_evaluator, reflection_evaluator, continuous_evaluator
 from utils.context_enhancer import context_enhancer
-import json
-import time
-import logging
 
 logger = logging.getLogger(__name__)
 
-class RAGEngine:
-    def __init__(self):
-        if not settings.GOOGLE_API_KEY:
-            raise ValueError("Google API key not configured for RAG engine")
-            
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
-        
-        # Initialize Gemini model for text generation with fixed configuration
-        self.model = genai.GenerativeModel(
-            model_name=settings.LLM_MODEL,
-            generation_config=settings.get_gemini_config()  # This now excludes the model field
-        )
-        
-        self.vector_store = vector_store
-        self.similarity_threshold = settings.SIMILARITY_THRESHOLD
-        self.max_chunks = settings.MAX_RETRIEVED_CHUNKS
-        self.context_window = settings.CONTEXT_WINDOW
-        
-        logger.info(f"RAG Engine initialized with model: {settings.LLM_MODEL}")
+class ModernRAGEngine:
+    """
+    Modern RAG Engine with self-reflection and corrective capabilities
+    """
     
-    def query(self, 
-             question: str, 
-             conversation_history: List[Dict[str, str]] = None,
-             user_context: Dict[str, Any] = None) -> Dict[str, Any]:
+    def __init__(self, vector_store):
+        """Initialize the modern RAG engine"""
+        self.vector_store = vector_store
+        
+        # Initialize retrieval system
+        initialize_retrieval_system(vector_store)
+        self.retriever = get_contextual_retriever()
+        
+        # Initialize LLM manager
+        self.llm_manager = llm_manager
+        
+        # Initialize monitoring
+        self.monitoring = self._setup_monitoring()
+        
+        # RAG chains
+        self.rag_chain = None
+        self.reflection_chain = None
+        self.correction_chain = None
+        
+        self._setup_chains()
+        
+        logger.info("Modern RAG Engine initialized successfully")
+    
+    def _setup_monitoring(self) -> Optional[Any]:
+        """Setup monitoring and observability"""
+        if not MONITORING_AVAILABLE or not settings.USE_LANGFUSE:
+            return None
         
         try:
-            # Step 1: Enhance query with context
-            enhanced_query = self._enhance_query(question, conversation_history, user_context)
-            
-            # Step 2: Classify query and extract entities
-            query_classification = self._classify_query(question)
-            
-            # Step 3: Retrieve relevant documents
-            retrieved_docs = self._retrieve_documents(enhanced_query, query_classification)
-            
-            # Step 4: Generate response
-            response = self._generate_response(
-                question, 
-                retrieved_docs, 
-                conversation_history,
-                query_classification,
-                user_context
+            langfuse = Langfuse(
+                secret_key=settings.LANGFUSE_SECRET_KEY,
+                public_key=settings.LANGFUSE_PUBLIC_KEY,
+                host=settings.LANGFUSE_HOST
             )
+            logger.info("LangFuse monitoring initialized")
+            return langfuse
+        except Exception as e:
+            logger.warning(f"Failed to initialize monitoring: {e}")
+            return None
+    
+    def _setup_chains(self):
+        """Setup LangChain LCEL chains"""
+        
+        # Main RAG chain
+        self.rag_chain = self._create_rag_chain()
+        
+        # Self-reflection chain
+        if settings.USE_SELF_REFLECTION:
+            self.reflection_chain = self._create_reflection_chain()
+        
+        # Correction chain for CRAG
+        self.correction_chain = self._create_correction_chain()
+    
+    def _create_rag_chain(self):
+        """Create the main RAG chain using LCEL"""
+        
+        # System prompt template
+        system_template = prompt_templates.SYSTEM_PROMPT
+        
+        # RAG prompt template
+        rag_template = """Based on the following context, please answer the question.
+
+Context:
+{context}
+
+User Context:
+{user_context}
+
+Question: {question}
+
+Provide a comprehensive answer that:
+1. Directly addresses the question
+2. Uses the provided context effectively
+3. Considers the user's background and needs
+4. Offers practical insights and next steps
+
+Answer:"""
+        
+        # Create prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_template),
+            ("human", rag_template)
+        ])
+        
+        # Create the chain
+        def format_context(docs):
+            return "\n\n".join([
+                f"Source: {doc.metadata.get('source', 'Unknown')}\n{doc.page_content}"
+                for doc in docs
+            ])
+        
+        def format_user_context(context):
+            if not context:
+                return "No specific user context provided."
+            
+            parts = []
+            for key, value in context.items():
+                if key in ['country', 'sector', 'business_stage', 'name']:
+                    parts.append(f"{key.title()}: {value}")
+            
+            return " | ".join(parts) if parts else "No specific user context provided."
+        
+        # Create runnable chain
+        chain = (
+            {
+                "context": lambda x: format_context(x["documents"]),
+                "user_context": lambda x: format_user_context(x.get("user_context")),
+                "question": lambda x: x["question"]
+            }
+            | prompt
+            | self.llm_manager.get_langchain_llm()
+            | StrOutputParser()
+        )
+        
+        return chain
+    
+    def _create_reflection_chain(self):
+        """Create self-reflection chain"""
+        
+        reflection_template = """Please evaluate the quality of this answer to the given question:
+
+Question: {question}
+Answer: {answer}
+Context Used: {context}
+
+Evaluate the answer on these criteria:
+1. Relevance: Does it address the question?
+2. Accuracy: Is the information correct based on context?
+3. Completeness: Does it fully answer the question?
+4. Clarity: Is it well-structured and understandable?
+
+For each criterion, provide:
+- Score (1-10)
+- Brief explanation
+
+Also suggest any improvements if the answer could be enhanced.
+
+Provide your evaluation in JSON format:
+{{
+    "relevance": {{"score": X, "explanation": "..."}},
+    "accuracy": {{"score": X, "explanation": "..."}},
+    "completeness": {{"score": X, "explanation": "..."}},
+    "clarity": {{"score": X, "explanation": "..."}},
+    "overall_score": X,
+    "improvements": ["..."],
+    "requires_correction": true/false
+}}"""
+        
+        prompt = PromptTemplate(
+            template=reflection_template,
+            input_variables=["question", "answer", "context"]
+        )
+        
+        chain = (
+            prompt
+            | self.llm_manager.get_langchain_llm()
+            | StrOutputParser()
+        )
+        
+        return chain
+    
+    def _create_correction_chain(self):
+        """Create corrective RAG chain"""
+        
+        correction_template = """The following answer has been identified as needing improvement:
+
+Original Question: {question}
+Original Answer: {answer}
+Issues Identified: {issues}
+Additional Context: {additional_context}
+
+Please provide an improved answer that addresses the identified issues while maintaining accuracy and relevance.
+
+Improved Answer:"""
+        
+        prompt = PromptTemplate(
+            template=correction_template,
+            input_variables=["question", "answer", "issues", "additional_context"]
+        )
+        
+        chain = (
+            prompt
+            | self.llm_manager.get_langchain_llm()
+            | StrOutputParser()
+        )
+        
+        return chain
+    
+    @trace("rag_query")
+    def query(self, 
+             question: str,
+             conversation_history: List[Dict[str, str]] = None,
+             user_context: Dict[str, Any] = None,
+             provider: str = None) -> Dict[str, Any]:
+        """
+        Process query through modern RAG pipeline
+        
+        Args:
+            question: User's question
+            conversation_history: Previous conversation context
+            user_context: User profile and preferences
+            provider: Specific LLM provider to use
+            
+        Returns:
+            Complete RAG response with metadata
+        """
+        
+        try:
+            # Step 1: Enhanced retrieval
+            retrieved_docs = self._retrieve_with_context(
+                question, conversation_history, user_context
+            )
+            
+            if not retrieved_docs:
+                return self._create_fallback_response(question)
+            
+            # Step 2: Generate initial response
+            initial_response = self._generate_response(
+                question, retrieved_docs, user_context, provider
+            )
+            
+            # Step 3: Self-reflection (if enabled)
+            reflection_result = None
+            if settings.USE_SELF_REFLECTION and self.reflection_chain:
+                reflection_result = self._perform_self_reflection(
+                    question, initial_response, retrieved_docs
+                )
+            
+            # Step 4: Correction (if needed)
+            final_response = initial_response
+            if reflection_result and reflection_result.get("requires_correction"):
+                final_response = self._perform_correction(
+                    question, initial_response, reflection_result, retrieved_docs
+                )
             
             # Step 5: Generate follow-up questions
-            follow_ups = self._generate_follow_up_questions(question, response)
+            follow_ups = self._generate_follow_ups(question, final_response)
             
-            return {
-                "answer": response,
+            # Step 6: Create response object
+            response = {
+                "answer": final_response,
                 "sources": self._format_sources(retrieved_docs),
                 "follow_up_questions": follow_ups,
-                "query_classification": query_classification,
-                "confidence": self._calculate_confidence(retrieved_docs),
-                "enhanced_query": enhanced_query
+                "metadata": {
+                    "retrieval_method": getattr(retrieved_docs[0], 'retrieval_method', 'unknown') if retrieved_docs else 'none',
+                    "num_sources": len(retrieved_docs),
+                    "llm_provider": provider or settings.PRIMARY_LLM_PROVIDER,
+                    "self_reflection": reflection_result,
+                    "was_corrected": reflection_result.get("requires_correction", False) if reflection_result else False,
+                    "timestamp": datetime.now().isoformat()
+                },
+                "confidence": self._calculate_confidence(retrieved_docs, reflection_result)
             }
             
-        except Exception as e:
-            logger.error(f"RAG Engine error: {e}")
-            return {
-                "answer": f"I apologize, but I encountered an error processing your question: {str(e)}",
-                "sources": [],
-                "follow_up_questions": [],
-                "query_classification": {},
-                "confidence": 0.0,
-                "enhanced_query": question
-            }
-    
-    def _enhance_query(self, 
-                      query: str, 
-                      history: List[Dict[str, str]] = None,
-                      user_context: Dict[str, Any] = None) -> str:
-        
-        # Use context enhancer to improve query
-        enhancements = context_enhancer.create_search_enhancements(query, user_context)
-        
-        # Add conversation context if available
-        if history:
-            recent_context = " ".join([
-                f"{msg.get('role', '')}: {msg.get('content', '')}" 
-                for msg in history[-3:] if msg.get('content')
-            ])
-            
-            context_prompt = prompt_templates.CONTEXT_ENHANCEMENT_PROMPT.format(
-                query=query,
-                history=recent_context
-            )
-            
-            try:
-                # Create a separate model instance for context enhancement
-                enhancement_model = genai.GenerativeModel(
-                    model_name="gemini-1.5-flash",  # Use faster model for enhancement
-                    generation_config={"temperature": 0.3, "max_output_tokens": 200}
+            # Step 7: Add to evaluation queue
+            if continuous_evaluator:
+                continuous_evaluator.add_to_evaluation_queue(
+                    query=question,
+                    answer=final_response,
+                    contexts=[doc.page_content for doc in retrieved_docs[:3]],
+                    metadata={"user_context": user_context}
                 )
-                response = enhancement_model.generate_content(context_prompt)
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as e:
-                logger.warning(f"Context enhancement failed: {e}")
-        
-        return enhancements.get('expanded_query', query)
-    
-    def _classify_query(self, query: str) -> Dict[str, Any]:
-        classification_prompt = prompt_templates.QUERY_CLASSIFICATION_PROMPT.format(query=query)
-        
-        try:
-            # Create a separate model instance for classification
-            classification_model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                generation_config={"temperature": 0.1, "max_output_tokens": 300}
-            )
-            response = classification_model.generate_content(classification_prompt)
-            if response and response.text:
-                # Try to parse JSON response
-                result = response.text.strip()
-                # Remove markdown code blocks if present
-                if result.startswith('```'):
-                    result = result.split('\n', 1)[1].rsplit('\n', 1)[0]
-                return json.loads(result)
-            else:
-                return self._fallback_classification(query)
-                
-        except (json.JSONDecodeError, Exception) as e:
-            logger.warning(f"Query classification failed: {e}")
-            return self._fallback_classification(query)
-    
-    def _fallback_classification(self, query: str) -> Dict[str, Any]:
-        query_lower = query.lower()
-        
-        categories = []
-        confidence_scores = {}
-        
-        # Simple keyword-based classification
-        classification_keywords = {
-            'FUNDING': ['funding', 'investment', 'vc', 'capital', 'grant', 'investor', 'money'],
-            'REGULATORY': ['regulation', 'legal', 'compliance', 'registration', 'license', 'permit'],
-            'MARKET': ['market', 'industry', 'competition', 'trends', 'analysis', 'research'],
-            'SUCCESS_STORIES': ['success', 'case study', 'company', 'founder', 'unicorn'],
-            'SECTOR': ['fintech', 'agritech', 'healthtech', 'edtech', 'technology'],
-            'COUNTRY': ['nigeria', 'kenya', 'ghana', 'south africa', 'egypt', 'morocco']
-        }
-        
-        for category, keywords in classification_keywords.items():
-            matches = sum(1 for keyword in keywords if keyword in query_lower)
-            if matches > 0:
-                categories.append(category)
-                confidence_scores[category] = min(matches / len(keywords) * 2, 1.0)
-        
-        if not categories:
-            categories = ['GENERAL']
-            confidence_scores['GENERAL'] = 0.5
-        
-        return {
-            "categories": categories,
-            "confidence_scores": confidence_scores
-        }
-    
-    def _retrieve_documents(self, query: str, classification: Dict[str, Any]) -> List[Dict[str, Any]]:
-        # Create filters based on classification
-        filters = {}
-        
-        categories = classification.get('categories', [])
-        if categories and 'GENERAL' not in categories:
-            # Add category-based filtering if needed
-            if 'COUNTRY' in categories:
-                # Extract country names from query for filtering
-                for country in settings.AFRICAN_COUNTRIES:
-                    if country.lower() in query.lower():
-                        filters['country'] = country
-                        break
-        
-        # Perform vector search
-        try:
-            results = self.vector_store.search(
-                query=query,
-                n_results=self.max_chunks,
-                filters=filters if filters else None
-            )
+            
+            return response
+            
         except Exception as e:
-            logger.error(f"Vector search failed: {e}")
+            logger.error(f"RAG query failed: {e}")
+            return self._create_error_response(question, str(e))
+    
+    def _retrieve_with_context(self, 
+                             question: str,
+                             conversation_history: List[Dict[str, str]],
+                             user_context: Dict[str, Any]) -> List[Document]:
+        """Retrieve documents with contextual awareness"""
+        
+        if not self.retriever:
+            logger.error("Retriever not initialized")
             return []
         
-        # Filter by similarity threshold
-        filtered_results = [
-            doc for doc in results 
-            if doc.get('similarity', 0) >= self.similarity_threshold
-        ]
-        
-        return filtered_results[:self.max_chunks]
+        try:
+            # Use contextual retriever
+            retrieval_results = self.retriever.retrieve_with_context(
+                query=question,
+                conversation_history=conversation_history,
+                user_context=user_context
+            )
+            
+            # Convert to LangChain Documents
+            documents = []
+            for result in retrieval_results:
+                doc = Document(
+                    page_content=result.content,
+                    metadata={
+                        **result.metadata,
+                        "similarity_score": result.score,
+                        "retrieval_method": result.retrieval_method,
+                        "rerank_score": result.rerank_score
+                    }
+                )
+                documents.append(doc)
+            
+            logger.debug(f"Retrieved {len(documents)} documents for query: {question[:100]}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Retrieval failed: {e}")
+            return []
     
     def _generate_response(self, 
-                          question: str, 
-                          documents: List[Dict[str, Any]], 
-                          history: List[Dict[str, str]] = None,
-                          classification: Dict[str, Any] = None,
-                          user_context: Dict[str, Any] = None) -> str:
+                         question: str,
+                         documents: List[Document],
+                         user_context: Dict[str, Any],
+                         provider: str = None) -> str:
+        """Generate response using RAG chain"""
         
-        # Prepare context from retrieved documents
-        context_parts = []
-        for i, doc in enumerate(documents):
-            metadata = doc.get('metadata', {})
-            source_info = ""
-            
-            if metadata.get('source'):
-                source_info = f"Source: {metadata['source']}"
-            if metadata.get('country'):
-                source_info += f" | Country: {metadata['country']}"
-            if metadata.get('sector'):
-                source_info += f" | Sector: {metadata['sector']}"
-            
-            context_parts.append(f"[{i+1}] {source_info}\n{doc['content']}\n")
-        
-        context = "\n".join(context_parts)
-        
-        # Determine primary category for context-aware prompting
-        primary_category = None
-        if classification and 'categories' in classification:
-            categories = classification['categories']
-            if categories:
-                primary_category = categories[0].lower()
-        
-        # Add user context information
-        user_info = ""
-        if user_context:
-            user_details = []
-            if user_context.get('country'):
-                user_details.append(f"User location: {user_context['country']}")
-            if user_context.get('sector'):
-                user_details.append(f"Business sector: {user_context['sector']}")
-            if user_context.get('business_stage'):
-                user_details.append(f"Business stage: {user_context['business_stage']}")
-            
-            if user_details:
-                user_info = f"\nUser Context: {' | '.join(user_details)}"
-        
-        # Format the prompt
-        rag_prompt = prompt_templates.format_rag_prompt(
-            context=context + user_info,
-            question=question,
-            category=primary_category
-        )
-        
-        # Build conversation context
-        conversation_context = ""
-        if history:
-            recent_messages = []
-            for msg in history[-3:]:  # Last 3 exchanges
-                if msg.get('role') and msg.get('content'):
-                    role = "Human" if msg['role'] == 'user' else "Assistant"
-                    recent_messages.append(f"{role}: {msg['content'][:200]}")
-            
-            if recent_messages:
-                conversation_context = f"\nRecent conversation:\n" + "\n".join(recent_messages) + "\n"
-        
-        # Complete prompt with system instructions and conversation context
-        full_prompt = f"""{prompt_templates.SYSTEM_PROMPT}
-
-{conversation_context}
-
-{rag_prompt}"""
-        
-        # Generate response using Gemini
         try:
-            response = self.model.generate_content(full_prompt)
+            # Prepare input for chain
+            chain_input = {
+                "question": question,
+                "documents": documents,
+                "user_context": user_context or {}
+            }
             
-            if response and response.text:
-                return response.text.strip()
+            # Use specific provider if requested
+            if provider and provider in self.llm_manager.get_available_providers():
+                # Create temporary chain with specific provider
+                temp_llm = self.llm_manager.get_langchain_llm(provider)
+                temp_chain = self.rag_chain.with_config(
+                    configurable={"llm": temp_llm}
+                )
+                response = temp_chain.invoke(chain_input)
             else:
-                return "I apologize, but I'm having trouble generating a response right now. Please try rephrasing your question."
+                response = self.rag_chain.invoke(chain_input)
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Response generation failed: {e}")
+            return f"I apologize, but I encountered an error generating a response: {str(e)}"
+    
+    def _perform_self_reflection(self, 
+                               question: str,
+                               answer: str,
+                               documents: List[Document]) -> Dict[str, Any]:
+        """Perform self-reflection on the generated answer"""
+        
+        try:
+            context_summary = "\n".join([
+                doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+                for doc in documents[:3]
+            ])
+            
+            reflection_input = {
+                "question": question,
+                "answer": answer,
+                "context": context_summary
+            }
+            
+            reflection_response = self.reflection_chain.invoke(reflection_input)
+            
+            # Parse JSON response
+            try:
+                reflection_data = json.loads(reflection_response)
+                return reflection_data
+            except json.JSONDecodeError:
+                # Fallback parsing
+                return {
+                    "overall_score": 7.0,
+                    "requires_correction": False,
+                    "raw_response": reflection_response
+                }
                 
         except Exception as e:
-            logger.error(f"Gemini generation error: {e}")
-            return f"I encountered an error while generating a response. Please try again. Error: {str(e)}"
+            logger.error(f"Self-reflection failed: {e}")
+            return {"overall_score": 7.0, "requires_correction": False}
     
-    def _generate_follow_up_questions(self, question: str, answer: str) -> List[str]:
+    def _perform_correction(self, 
+                          question: str,
+                          original_answer: str,
+                          reflection_result: Dict[str, Any],
+                          documents: List[Document]) -> str:
+        """Perform corrective RAG if needed"""
+        
         try:
-            prompt = prompt_templates.FOLLOW_UP_QUESTIONS_PROMPT.format(
-                question=question,
-                answer=answer[:1000]  # Truncate for token limits
-            )
+            # Extract issues from reflection
+            issues = []
+            for criterion in ["relevance", "accuracy", "completeness", "clarity"]:
+                if criterion in reflection_result:
+                    criterion_data = reflection_result[criterion]
+                    if isinstance(criterion_data, dict) and criterion_data.get("score", 10) < 7:
+                        issues.append(f"{criterion}: {criterion_data.get('explanation', 'Needs improvement')}")
             
-            # Create a separate model instance for follow-up generation
-            followup_model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                generation_config={"temperature": 0.5, "max_output_tokens": 300}
-            )
-            response = followup_model.generate_content(prompt)
+            if reflection_result.get("improvements"):
+                issues.extend(reflection_result["improvements"])
             
-            if not response or not response.text:
-                return self._get_default_follow_ups()
+            # Additional context from documents
+            additional_context = "\n".join([
+                doc.page_content for doc in documents[:2]
+            ])
             
-            result = response.text.strip()
+            correction_input = {
+                "question": question,
+                "answer": original_answer,
+                "issues": "; ".join(issues),
+                "additional_context": additional_context
+            }
             
-            # Parse the response into a list
-            follow_ups = []
-            for line in result.split('\n'):
-                line = line.strip()
-                if line and (line.startswith('-') or line.startswith('•') or line[0].isdigit()):
-                    # Clean up the line
-                    cleaned = line.lstrip('-•0123456789. ').strip()
-                    if cleaned and '?' in cleaned:
-                        follow_ups.append(cleaned)
+            corrected_answer = self.correction_chain.invoke(correction_input)
             
-            return follow_ups[:5] if follow_ups else self._get_default_follow_ups()
+            logger.info("Answer corrected based on self-reflection")
+            return corrected_answer
             
         except Exception as e:
-            logger.warning(f"Follow-up generation failed: {e}")
+            logger.error(f"Correction failed: {e}")
+            return original_answer
+    
+    def _generate_follow_ups(self, question: str, answer: str) -> List[str]:
+        """Generate relevant follow-up questions"""
+        
+        try:
+            follow_up_prompt = f"""Based on this Q&A about African business, suggest 3-4 relevant follow-up questions:
+
+Question: {question}
+Answer: {answer[:500]}...
+
+Generate follow-up questions that would help the user:
+1. Dive deeper into the topic
+2. Explore related opportunities
+3. Understand practical next steps
+4. Learn about regional variations
+
+Return only the questions, one per line."""
+            
+            response = self.llm_manager.generate(follow_up_prompt)
+            
+            # Parse follow-up questions
+            questions = []
+            for line in response.split('\n'):
+                line = line.strip()
+                if line and ('?' in line or line.endswith('.')):
+                    # Clean up the question
+                    clean_line = line.lstrip('1234567890.-• ').strip()
+                    if clean_line:
+                        questions.append(clean_line)
+            
+            return questions[:4]
+            
+        except Exception as e:
+            logger.error(f"Follow-up generation failed: {e}")
             return self._get_default_follow_ups()
     
     def _get_default_follow_ups(self) -> List[str]:
         """Get default follow-up questions"""
         return [
-            "Can you tell me more about this topic?",
-            "What are the next steps I should consider?",
-            "Are there any related opportunities or challenges?",
-            "How does this apply to my specific situation?",
-            "What resources can help me learn more?"
+            "Can you provide more specific examples?",
+            "What are the key challenges in this area?",
+            "How does this vary across different African countries?",
+            "What are the next steps I should consider?"
         ]
     
-    def _format_sources(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        sources = []
+    def _format_sources(self, documents: List[Document]) -> List[Dict[str, Any]]:
+        """Format source documents for response"""
         
+        sources = []
         for doc in documents:
-            metadata = doc.get('metadata', {})
+            metadata = doc.metadata
             
             source = {
-                "content_preview": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
-                "similarity": round(doc.get('similarity', 0), 3),
-                "metadata": {}
+                "content_preview": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
+                "similarity_score": metadata.get("similarity_score", 0.0),
+                "metadata": {
+                    key: value for key, value in metadata.items()
+                    if key not in ["similarity_score", "rerank_score"]
+                }
             }
             
-            # Add relevant metadata
-            for key in ['source', 'country', 'sector', 'date', 'title', 'type']:
-                if metadata.get(key):
-                    source['metadata'][key] = metadata[key]
+            if metadata.get("rerank_score"):
+                source["rerank_score"] = metadata["rerank_score"]
             
             sources.append(source)
         
         return sources
     
-    def _calculate_confidence(self, documents: List[Dict[str, Any]]) -> float:
+    def _calculate_confidence(self, 
+                            documents: List[Document],
+                            reflection_result: Dict[str, Any] = None) -> float:
+        """Calculate confidence score for the response"""
+        
         if not documents:
             return 0.0
         
-        # Calculate confidence based on similarity scores and number of relevant documents
-        similarities = [doc.get('similarity', 0) for doc in documents]
-        avg_similarity = sum(similarities) / len(similarities)
+        # Base confidence from retrieval scores
+        scores = [doc.metadata.get("similarity_score", 0.0) for doc in documents]
+        base_confidence = sum(scores) / len(scores) if scores else 0.0
         
-        # Factor in the number of high-quality results
-        high_quality_count = sum(1 for sim in similarities if sim > 0.8)
-        quality_factor = min(high_quality_count / 3, 1.0)  # Normalize to max 1.0
+        # Factor in number of high-quality sources
+        high_quality_count = sum(1 for score in scores if score > 0.8)
+        quality_factor = min(high_quality_count / 3, 1.0)
         
-        # Factor in total number of results
-        quantity_factor = min(len(documents) / 5, 1.0)  # Normalize to max 1.0
+        # Factor in self-reflection if available
+        reflection_factor = 1.0
+        if reflection_result:
+            overall_score = reflection_result.get("overall_score", 7.0)
+            reflection_factor = min(overall_score / 10.0, 1.0)
         
-        confidence = (avg_similarity * 0.5) + (quality_factor * 0.3) + (quantity_factor * 0.2)
-        return round(confidence, 3)
+        # Combined confidence
+        confidence = (base_confidence * 0.5) + (quality_factor * 0.3) + (reflection_factor * 0.2)
+        
+        return round(min(confidence, 1.0), 3)
+    
+    def _create_fallback_response(self, question: str) -> Dict[str, Any]:
+        """Create fallback response when no documents found"""
+        
+        return {
+            "answer": "I apologize, but I couldn't find relevant information to answer your question. Could you please rephrase or provide more context?",
+            "sources": [],
+            "follow_up_questions": [
+                "Could you provide more specific details about what you're looking for?",
+                "Are you interested in a particular African country or region?",
+                "What specific aspect of this topic would you like to explore?"
+            ],
+            "metadata": {
+                "retrieval_method": "none",
+                "num_sources": 0,
+                "was_fallback": True
+            },
+            "confidence": 0.0
+        }
+    
+    def _create_error_response(self, question: str, error: str) -> Dict[str, Any]:
+        """Create error response"""
+        
+        return {
+            "answer": f"I encountered an error processing your question: {error}. Please try again.",
+            "sources": [],
+            "follow_up_questions": [],
+            "metadata": {
+                "error": error,
+                "timestamp": datetime.now().isoformat()
+            },
+            "confidence": 0.0
+        }
+    
+    async def query_stream(self, 
+                          question: str,
+                          conversation_history: List[Dict[str, str]] = None,
+                          user_context: Dict[str, Any] = None,
+                          provider: str = None) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream RAG response for real-time user experience"""
+        
+        try:
+            # Retrieve documents first
+            documents = self._retrieve_with_context(
+                question, conversation_history, user_context
+            )
+            
+            if not documents:
+                yield {"type": "answer", "content": "No relevant information found."}
+                return
+            
+            # Stream the response generation
+            async for chunk in self.llm_manager.generate_stream(
+                prompt=self._create_streaming_prompt(question, documents, user_context),
+                provider=provider
+            ):
+                yield {"type": "answer_chunk", "content": chunk}
+            
+            # Send sources and metadata
+            yield {
+                "type": "sources",
+                "content": self._format_sources(documents)
+            }
+            
+            yield {
+                "type": "metadata",
+                "content": {
+                    "num_sources": len(documents),
+                    "confidence": self._calculate_confidence(documents)
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Streaming query failed: {e}")
+            yield {"type": "error", "content": str(e)}
+    
+    def _create_streaming_prompt(self, 
+                               question: str,
+                               documents: List[Document],
+                               user_context: Dict[str, Any]) -> str:
+        """Create prompt for streaming response"""
+        
+        context = "\n\n".join([
+            f"Source: {doc.metadata.get('source', 'Unknown')}\n{doc.page_content}"
+            for doc in documents[:5]
+        ])
+        
+        user_info = ""
+        if user_context:
+            info_parts = []
+            for key in ['country', 'sector', 'business_stage']:
+                if user_context.get(key):
+                    info_parts.append(f"{key}: {user_context[key]}")
+            if info_parts:
+                user_info = f"\nUser Context: {' | '.join(info_parts)}"
+        
+        return f"""{prompt_templates.SYSTEM_PROMPT}
 
-# Global RAG engine instance
-try:
-    rag_engine = RAGEngine()
-    logger.info("RAG Engine initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize RAG Engine: {e}")
-    rag_engine = None
+Context:
+{context}
+{user_info}
+
+Question: {question}
+
+Please provide a comprehensive answer based on the context above."""
+
+# Initialize global RAG engine (will be set up with vector store)
+modern_rag_engine = None
+
+def initialize_rag_engine(vector_store):
+    """Initialize the global RAG engine"""
+    global modern_rag_engine
+    
+    try:
+        modern_rag_engine = ModernRAGEngine(vector_store)
+        logger.info("Modern RAG Engine initialized successfully")
+        return modern_rag_engine
+    except Exception as e:
+        logger.error(f"Failed to initialize RAG engine: {e}")
+        return None
+
+def get_rag_engine() -> Optional[ModernRAGEngine]:
+    """Get the global RAG engine instance"""
+    return modern_rag_engine
+
+# For backward compatibility, maintain the rag_engine interface
+class RAGEngineWrapper:
+    """Wrapper to maintain backward compatibility"""
+    
+    def __init__(self):
+        self.modern_engine = None
+    
+    def set_engine(self, engine):
+        self.modern_engine = engine
+    
+    def query(self, question: str, **kwargs) -> Dict[str, Any]:
+        if self.modern_engine:
+            return self.modern_engine.query(question, **kwargs)
+        else:
+            return {
+                "answer": "RAG engine not initialized",
+                "sources": [],
+                "follow_up_questions": [],
+                "confidence": 0.0
+            }
+
+# Global wrapper for backward compatibility
+rag_engine = RAGEngineWrapper()

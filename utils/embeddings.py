@@ -1,530 +1,569 @@
 """
-UbuntuAI Embeddings Service
-
-This module provides embedding functionality for text processing in the UbuntuAI system.
-It handles Google Gemini embeddings with proper error handling and retry logic.
+Modern Multi-Provider Embedding Manager for UbuntuAI
+Supports OpenAI, Sentence Transformers, Google, Cohere with LangChain integration
 """
 
-import google.generativeai as genai
-import numpy as np
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
+from abc import ABC, abstractmethod
+import numpy as np
 import time
-import re
+import asyncio
+
+# LangChain Embeddings
+from langchain_core.embeddings import Embeddings
+from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_community.embeddings import SentenceTransformerEmbeddings
+
+# Sentence Transformers
+try:
+    from sentence_transformers import SentenceTransformer
+    ST_AVAILABLE = True
+except ImportError:
+    ST_AVAILABLE = False
+
+# Cohere
+try:
+    import cohere
+    from langchain_cohere import CohereEmbeddings
+    COHERE_AVAILABLE = True
+except ImportError:
+    COHERE_AVAILABLE = False
+
+# HuggingFace Transformers
+try:
+    from transformers import AutoTokenizer, AutoModel
+    import torch
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+
 from config.settings import settings
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
-class EmbeddingError(Exception):
-    """Custom exception for embedding-related errors"""
-    pass
-
-class EmbeddingService:
-    """
-    Service for creating and managing text embeddings using Google Gemini API.
+class BaseEmbeddingProvider(ABC):
+    """Abstract base class for embedding providers"""
     
-    This service handles:
-    - Text preprocessing and truncation
-    - Embedding creation with retry logic
-    - Batch processing for efficiency
-    - Error handling and logging
-    - Multiple task types for different use cases
+    def __init__(self, provider_name: str):
+        self.provider_name = provider_name
+        self.is_available = False
+        self.model = None
+        self.dimensions = 0
+        self._initialize()
+    
+    @abstractmethod
+    def _initialize(self):
+        """Initialize the embedding provider"""
+        pass
+    
+    @abstractmethod
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of documents"""
+        pass
+    
+    @abstractmethod
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query"""
+        pass
+    
+    def get_langchain_embeddings(self) -> Optional[Embeddings]:
+        """Get LangChain-compatible embeddings"""
+        return self.model
+    
+    def get_info(self) -> Dict[str, Any]:
+        """Get provider information"""
+        return {
+            "provider": self.provider_name,
+            "is_available": self.is_available,
+            "dimensions": self.dimensions,
+            "model_name": getattr(self.model, 'model', 'unknown') if self.model else None
+        }
+
+class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
+    """OpenAI embedding provider"""
+    
+    def _initialize(self):
+        try:
+            if not settings.OPENAI_API_KEY:
+                logger.warning("OpenAI API key not configured")
+                return
+            
+            config = settings.get_embedding_config("openai")
+            
+            self.model = OpenAIEmbeddings(
+                api_key=settings.OPENAI_API_KEY,
+                model=config["model"],
+                dimensions=config["dimensions"]
+            )
+            
+            self.dimensions = config["dimensions"]
+            self.is_available = True
+            
+            logger.info(f"OpenAI embeddings initialized: {config['model']} ({self.dimensions}D)")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI embeddings: {e}")
+            self.is_available = False
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not self.is_available:
+            raise ValueError("OpenAI embeddings not available")
+        return self.model.embed_documents(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        if not self.is_available:
+            raise ValueError("OpenAI embeddings not available")
+        return self.model.embed_query(text)
+
+class SentenceTransformerProvider(BaseEmbeddingProvider):
+    """Sentence Transformers embedding provider"""
+    
+    def _initialize(self):
+        try:
+            if not ST_AVAILABLE:
+                logger.warning("Sentence Transformers not available")
+                return
+            
+            config = settings.get_embedding_config("sentence-transformers")
+            model_name = config["model"]
+            
+            # Initialize the sentence transformer model directly
+            self.sentence_model = SentenceTransformer(
+                model_name,
+                device=config.get("device", "cpu")
+            )
+            
+            # Create LangChain wrapper
+            self.model = SentenceTransformerEmbeddings(
+                model_name=model_name,
+                model_kwargs={'device': config.get("device", "cpu")},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+            
+            self.dimensions = config["dimensions"]
+            self.is_available = True
+            
+            logger.info(f"Sentence Transformers initialized: {model_name} ({self.dimensions}D)")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Sentence Transformers: {e}")
+            self.is_available = False
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not self.is_available:
+            raise ValueError("Sentence Transformers not available")
+        return self.model.embed_documents(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        if not self.is_available:
+            raise ValueError("Sentence Transformers not available")
+        return self.model.embed_query(text)
+    
+    def encode_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
+        """Batch encoding with custom batch size"""
+        if not self.is_available:
+            raise ValueError("Sentence Transformers not available")
+        
+        embeddings = self.sentence_model.encode(
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=len(texts) > 100,
+            normalize_embeddings=True
+        )
+        
+        return embeddings.tolist()
+
+class GoogleEmbeddingProvider(BaseEmbeddingProvider):
+    """Google Gemini embedding provider"""
+    
+    def _initialize(self):
+        try:
+            if not settings.GOOGLE_API_KEY:
+                logger.warning("Google API key not configured")
+                return
+            
+            config = settings.get_embedding_config("google")
+            
+            self.model = GoogleGenerativeAIEmbeddings(
+                google_api_key=settings.GOOGLE_API_KEY,
+                model=config["model"]
+            )
+            
+            self.dimensions = config["dimensions"]
+            self.is_available = True
+            
+            logger.info(f"Google embeddings initialized: {config['model']} ({self.dimensions}D)")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Google embeddings: {e}")
+            self.is_available = False
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not self.is_available:
+            raise ValueError("Google embeddings not available")
+        return self.model.embed_documents(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        if not self.is_available:
+            raise ValueError("Google embeddings not available")
+        return self.model.embed_query(text)
+
+class CohereEmbeddingProvider(BaseEmbeddingProvider):
+    """Cohere embedding provider"""
+    
+    def _initialize(self):
+        try:
+            if not COHERE_AVAILABLE:
+                logger.warning("Cohere not available")
+                return
+            
+            if not settings.COHERE_API_KEY:
+                logger.warning("Cohere API key not configured")
+                return
+            
+            config = settings.get_embedding_config("cohere")
+            
+            self.model = CohereEmbeddings(
+                cohere_api_key=settings.COHERE_API_KEY,
+                model=config["model"]
+            )
+            
+            self.dimensions = config["dimensions"]
+            self.is_available = True
+            
+            logger.info(f"Cohere embeddings initialized: {config['model']} ({self.dimensions}D)")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Cohere embeddings: {e}")
+            self.is_available = False
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not self.is_available:
+            raise ValueError("Cohere embeddings not available")
+        return self.model.embed_documents(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        if not self.is_available:
+            raise ValueError("Cohere embeddings not available")
+        return self.model.embed_query(text)
+
+class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
+    """HuggingFace Transformers embedding provider"""
+    
+    def _initialize(self):
+        try:
+            if not HF_AVAILABLE:
+                logger.warning("HuggingFace Transformers not available")
+                return
+            
+            # Use BGE model as default
+            model_name = "BAAI/bge-large-en-v1.5"
+            
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.hf_model = AutoModel.from_pretrained(model_name)
+            
+            # Set to evaluation mode
+            self.hf_model.eval()
+            
+            # Create a simple wrapper for LangChain compatibility
+            self.model = self
+            self.dimensions = 1024  # BGE-large dimensions
+            self.is_available = True
+            
+            logger.info(f"HuggingFace embeddings initialized: {model_name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize HuggingFace embeddings: {e}")
+            self.is_available = False
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not self.is_available:
+            raise ValueError("HuggingFace embeddings not available")
+        
+        embeddings = []
+        for text in texts:
+            embedding = self._encode_single(text)
+            embeddings.append(embedding)
+        
+        return embeddings
+    
+    def embed_query(self, text: str) -> List[float]:
+        if not self.is_available:
+            raise ValueError("HuggingFace embeddings not available")
+        
+        return self._encode_single(text)
+    
+    def _encode_single(self, text: str) -> List[float]:
+        """Encode a single text using HuggingFace model"""
+        try:
+            # Tokenize
+            inputs = self.tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=512
+            )
+            
+            # Get embeddings
+            with torch.no_grad():
+                outputs = self.hf_model(**inputs)
+                # Use CLS token embedding
+                embedding = outputs.last_hidden_state[:, 0, :].squeeze()
+                # Normalize
+                embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
+                
+            return embedding.numpy().tolist()
+            
+        except Exception as e:
+            logger.error(f"HuggingFace encoding failed: {e}")
+            return [0.0] * self.dimensions
+
+class ModernEmbeddingManager:
+    """
+    Modern embedding manager with multi-provider support and fallback
     """
     
     def __init__(self):
-        """Initialize the embedding service with Google Gemini client and configuration"""
+        self.providers = {}
+        self.primary_provider = settings.PRIMARY_EMBEDDING_PROVIDER
+        self.fallback_order = ["sentence-transformers", "openai", "google", "cohere", "huggingface"]
+        self._initialize_providers()
+    
+    def _initialize_providers(self):
+        """Initialize all available embedding providers"""
+        
+        provider_classes = {
+            "openai": OpenAIEmbeddingProvider,
+            "sentence-transformers": SentenceTransformerProvider,
+            "google": GoogleEmbeddingProvider,
+            "cohere": CohereEmbeddingProvider,
+            "huggingface": HuggingFaceEmbeddingProvider
+        }
+        
+        for provider_name, provider_class in provider_classes.items():
+            try:
+                provider = provider_class(provider_name)
+                self.providers[provider_name] = provider
+                status = "Available" if provider.is_available else "Unavailable"
+                logger.info(f"Embedding provider {provider_name}: {status}")
+            except Exception as e:
+                logger.error(f"Failed to initialize {provider_name} embeddings: {e}")
+    
+    def get_provider(self, provider_name: str = None) -> Optional[BaseEmbeddingProvider]:
+        """Get a specific embedding provider"""
+        
+        if provider_name and provider_name in self.providers:
+            provider = self.providers[provider_name]
+            if provider.is_available:
+                return provider
+            else:
+                logger.warning(f"Provider {provider_name} not available")
+        
+        # Use primary provider
+        if self.primary_provider in self.providers and self.providers[self.primary_provider].is_available:
+            return self.providers[self.primary_provider]
+        
+        # Fallback to any available provider
+        for provider_name in self.fallback_order:
+            if provider_name in self.providers and self.providers[provider_name].is_available:
+                logger.warning(f"Falling back to {provider_name} embeddings")
+                return self.providers[provider_name]
+        
+        logger.error("No embedding providers available")
+        return None
+    
+    def get_langchain_embeddings(self, provider: str = None) -> Optional[Embeddings]:
+        """Get LangChain-compatible embeddings instance"""
+        embedding_provider = self.get_provider(provider)
+        if embedding_provider:
+            return embedding_provider.get_langchain_embeddings()
+        return None
+    
+    def embed_documents(self, texts: List[str], provider: str = None) -> List[List[float]]:
+        """Embed multiple documents"""
+        embedding_provider = self.get_provider(provider)
+        if not embedding_provider:
+            raise ValueError("No embedding provider available")
+        
         try:
-            if not settings.GOOGLE_API_KEY:
-                raise EmbeddingError("Google Gemini API key not configured")
-                
-            genai.configure(api_key=settings.GOOGLE_API_KEY)
-            
-            # Get configuration from settings
-            self.model_name = settings.EMBEDDING_MODEL
-            self.dimensions = settings.EMBEDDING_DIMENSIONS
-            self.task_type = settings.EMBEDDING_TASK_TYPE
-            self.max_input_tokens = settings.MAX_INPUT_TOKENS
-            
-            # Rough character to token ratio for Gemini (approximately 1 token = 4 characters)
-            self.char_to_token_ratio = 4
-            self.max_input_chars = self.max_input_tokens * self.char_to_token_ratio
-            
-            logger.info(f"Gemini embedding service initialized with model: {self.model_name}")
-            logger.info(f"Dimensions: {self.dimensions}, Task type: {self.task_type}")
-            
+            return embedding_provider.embed_documents(texts)
         except Exception as e:
-            logger.error(f"Failed to initialize embedding service: {e}")
-            raise EmbeddingError(f"Initialization failed: {e}")
-        
-    def count_tokens(self, text: str) -> int:
-        """
-        Estimate the number of tokens in a text string.
-        
-        Args:
-            text: Input text to count tokens for
-            
-        Returns:
-            Estimated number of tokens in the text
-        """
-        try:
-            if not isinstance(text, str):
-                raise EmbeddingError("Input must be a string")
-            
-            # Simple estimation: 1 token ≈ 4 characters for most languages
-            # This is a rough estimate since Gemini uses its own tokenizer
-            return len(text) // self.char_to_token_ratio
-            
-        except Exception as e:
-            logger.error(f"Error counting tokens: {e}")
-            return len(text) // 4  # Fallback estimation
-    
-    def truncate_text(self, text: str, max_tokens: Optional[int] = None) -> str:
-        """
-        Truncate text to fit within token limits.
-        
-        Args:
-            text: Input text to truncate
-            max_tokens: Maximum number of tokens (uses default if not specified)
-            
-        Returns:
-            Truncated text that fits within token limits
-        """
-        try:
-            if not isinstance(text, str):
-                raise EmbeddingError("Input must be a string")
-                
-            if max_tokens is None:
-                max_tokens = self.max_input_tokens
-                
-            # Clean and normalize text
-            text = self._clean_text(text)
-            
-            estimated_tokens = self.count_tokens(text)
-            if estimated_tokens <= max_tokens:
-                return text
-                
-            # Truncate to estimated character limit
-            max_chars = max_tokens * self.char_to_token_ratio
-            truncated_text = text[:max_chars]
-            
-            # Try to cut at sentence boundary
-            truncated_text = self._truncate_at_sentence_boundary(truncated_text)
-            
-            if len(text) > len(truncated_text):
-                logger.warning(f"Text truncated from {len(text)} to {len(truncated_text)} characters")
-                
-            return truncated_text
-            
-        except Exception as e:
-            logger.error(f"Error truncating text: {e}")
-            # Fallback: return first portion of text
-            fallback_chars = (max_tokens or 2000) * 4
-            return text[:fallback_chars]
-    
-    def _clean_text(self, text: str) -> str:
-        """Clean and normalize text for embedding"""
-        # Remove excessive whitespace
-        text = re.sub(r'\s+', ' ', text.strip())
-        
-        # Remove control characters but keep newlines
-        text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
-        
-        return text
-    
-    def _truncate_at_sentence_boundary(self, text: str) -> str:
-        """Truncate text at the last complete sentence"""
-        sentence_endings = ['. ', '! ', '? ', '.\n', '!\n', '?\n']
-        
-        for ending in sentence_endings:
-            last_index = text.rfind(ending)
-            if last_index > len(text) * 0.8:  # Only if we're keeping at least 80% of text
-                return text[:last_index + len(ending)]
-        
-        return text
-    
-    def create_embedding(self, text: str, task_type: Optional[str] = None, retry_count: int = 3) -> Optional[List[float]]:
-        """
-        Create an embedding for a single text string using Gemini.
-        
-        Args:
-            text: Input text to create embedding for
-            task_type: Task type for embedding ("RETRIEVAL_QUERY", "RETRIEVAL_DOCUMENT", "SEMANTIC_SIMILARITY", etc.)
-            retry_count: Number of retry attempts on failure
-            
-        Returns:
-            List of embedding values or None if failed
-        """
-        if not text or not text.strip():
-            logger.warning("Empty text provided for embedding")
-            return None
-            
-        try:
-            # Use provided task type or default
-            embedding_task_type = task_type or self.task_type
-            
-            # Truncate text to fit within limits
-            processed_text = self.truncate_text(text)
-            
-            for attempt in range(retry_count):
-                try:
-                    # Create embedding using Gemini
-                    result = genai.embed_content(
-                        model=self.model_name,
-                        content=processed_text,
-                        task_type=embedding_task_type,
-                        output_dimensionality=self.dimensions if self.dimensions < 3072 else None
-                    )
-                    
-                    if not result or 'embedding' not in result:
-                        raise EmbeddingError("Empty response from Gemini API")
-                    
-                    embedding = result['embedding']
-                    
-                    if not embedding or len(embedding) == 0:
-                        raise EmbeddingError("Empty embedding generated")
-                    
-                    # Validate embedding dimensions
-                    expected_dims = self.dimensions
-                    if len(embedding) != expected_dims:
-                        logger.warning(f"Embedding dimension mismatch: expected {expected_dims}, got {len(embedding)}")
-                        
-                    logger.debug(f"Successfully created Gemini embedding with {len(embedding)} dimensions")
-                    return embedding
-                    
-                except Exception as e:
-                    logger.error(f"Gemini API error (attempt {attempt + 1}): {e}")
-                    if attempt < retry_count - 1:
-                        time.sleep(2 ** attempt)  # Exponential backoff
-                        continue
-                    else:
-                        raise EmbeddingError(f"All retry attempts failed: {e}")
-                        
-            return None
-            
-        except EmbeddingError:
+            logger.error(f"Document embedding failed: {e}")
             raise
-        except Exception as e:
-            logger.error(f"Fatal error in create_embedding: {e}")
-            raise EmbeddingError(f"Embedding creation failed: {e}")
     
-    def create_embeddings_batch(self, texts: List[str], task_type: Optional[str] = None, batch_size: int = 20) -> List[Optional[List[float]]]:
-        """
-        Create embeddings for multiple texts in batches.
+    def embed_query(self, text: str, provider: str = None) -> List[float]:
+        """Embed a single query"""
+        embedding_provider = self.get_provider(provider)
+        if not embedding_provider:
+            raise ValueError("No embedding provider available")
         
-        Args:
-            texts: List of input texts
-            task_type: Task type for embeddings
-            batch_size: Number of texts to process in each batch
-            
-        Returns:
-            List of embeddings (same order as input texts)
-        """
-        if not texts:
-            logger.warning("Empty text list provided for batch embedding")
-            return []
-            
         try:
-            embeddings = []
-            total_batches = (len(texts) + batch_size - 1) // batch_size
-            
-            logger.info(f"Processing {len(texts)} texts in {total_batches} batches")
-            
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
-                batch_num = (i // batch_size) + 1
-                
-                logger.debug(f"Processing batch {batch_num}/{total_batches}")
-                
-                try:
-                    # Process each text individually (Gemini embed_content processes one at a time)
-                    batch_embeddings = []
-                    for text in batch:
-                        if text and text.strip():
-                            try:
-                                embedding = self.create_embedding(text, task_type)
-                                batch_embeddings.append(embedding)
-                                if embedding:
-                                    logger.debug(f"Successfully created embedding for text: {text[:50]}...")
-                                else:
-                                    logger.warning(f"Failed to create embedding for text: {text[:50]}...")
-                            except Exception as e:
-                                logger.error(f"Failed to create embedding for text: {e}")
-                                batch_embeddings.append(None)
-                        else:
-                            batch_embeddings.append(None)
-                    
-                    embeddings.extend(batch_embeddings)
-                    
-                    # Rate limiting between batches
-                    if i + batch_size < len(texts):
-                        time.sleep(0.1)
-                        
-                except Exception as e:
-                    logger.error(f"Error in batch {batch_num}: {e}")
-                    # Add None for failed batch
-                    embeddings.extend([None] * len(batch))
-            
-            success_count = sum(1 for e in embeddings if e is not None)
-            logger.info(f"Batch processing complete: {success_count}/{len(texts)} successful")
-            
-            return embeddings
-            
+            return embedding_provider.embed_query(text)
         except Exception as e:
-            logger.error(f"Fatal error in batch embedding: {e}")
-            raise EmbeddingError(f"Batch embedding failed: {e}")
+            logger.error(f"Query embedding failed: {e}")
+            raise
     
-    def create_query_embedding(self, query: str) -> Optional[List[float]]:
-        """
-        Create an embedding optimized for search queries.
+    def embed_documents_batch(self, 
+                            texts: List[str], 
+                            batch_size: int = 32,
+                            provider: str = None) -> List[List[float]]:
+        """Embed documents in batches for efficiency"""
         
-        Args:
-            query: Search query text
+        embedding_provider = self.get_provider(provider)
+        if not embedding_provider:
+            raise ValueError("No embedding provider available")
+        
+        # Use specialized batch method if available
+        if hasattr(embedding_provider, 'encode_batch'):
+            return embedding_provider.encode_batch(texts, batch_size)
+        
+        # Fallback to chunked processing
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            batch_embeddings = embedding_provider.embed_documents(batch)
+            all_embeddings.extend(batch_embeddings)
             
-        Returns:
-            Query embedding or None if failed
-        """
-        return self.create_embedding(query, task_type="RETRIEVAL_QUERY")
+            # Small delay to avoid rate limiting
+            if i + batch_size < len(texts):
+                time.sleep(0.1)
+        
+        return all_embeddings
     
-    def create_document_embedding(self, document: str) -> Optional[List[float]]:
-        """
-        Create an embedding optimized for documents.
+    def calculate_similarity(self, 
+                           embedding1: List[float], 
+                           embedding2: List[float]) -> float:
+        """Calculate cosine similarity between two embeddings"""
         
-        Args:
-            document: Document text
-            
-        Returns:
-            Document embedding or None if failed
-        """
-        return self.create_embedding(document, task_type="RETRIEVAL_DOCUMENT")
-    
-    def cosine_similarity(self, a: List[float], b: List[float]) -> float:
-        """
-        Calculate cosine similarity between two embedding vectors.
-        
-        Args:
-            a: First embedding vector
-            b: Second embedding vector
-            
-        Returns:
-            Cosine similarity score between -1 and 1
-        """
         try:
-            if not a or not b:
-                return 0.0
-                
-            if len(a) != len(b):
-                raise EmbeddingError(f"Vector dimensions don't match: {len(a)} vs {len(b)}")
+            a = np.array(embedding1, dtype=np.float32)
+            b = np.array(embedding2, dtype=np.float32)
             
-            a_np = np.array(a, dtype=np.float32)
-            b_np = np.array(b, dtype=np.float32)
-            
-            dot_product = np.dot(a_np, b_np)
-            norm_a = np.linalg.norm(a_np)
-            norm_b = np.linalg.norm(b_np)
+            # Calculate cosine similarity
+            dot_product = np.dot(a, b)
+            norm_a = np.linalg.norm(a)
+            norm_b = np.linalg.norm(b)
             
             if norm_a == 0 or norm_b == 0:
-                logger.warning("Zero norm vector encountered in similarity calculation")
                 return 0.0
-                
-            similarity = float(dot_product / (norm_a * norm_b))
             
-            # Clamp to valid range
-            similarity = max(-1.0, min(1.0, similarity))
-            
-            return similarity
+            similarity = dot_product / (norm_a * norm_b)
+            return float(np.clip(similarity, -1.0, 1.0))
             
         except Exception as e:
-            logger.error(f"Error calculating cosine similarity: {e}")
-            raise EmbeddingError(f"Similarity calculation failed: {e}")
+            logger.error(f"Similarity calculation failed: {e}")
+            return 0.0
     
-    def semantic_search(self, query_embedding: List[float], 
-                       document_embeddings: List[List[float]], 
-                       top_k: int = 10) -> List[Dict[str, Any]]:
-        """
-        Perform semantic search using embedding similarity.
+    def find_most_similar(self, 
+                         query_embedding: List[float],
+                         document_embeddings: List[List[float]],
+                         top_k: int = 10) -> List[Dict[str, Any]]:
+        """Find most similar documents to query"""
         
-        Args:
-            query_embedding: Query vector to search with
-            document_embeddings: List of document vectors to search in
-            top_k: Number of top results to return
-            
-        Returns:
-            List of search results with indices and similarity scores
-        """
-        try:
-            if not query_embedding:
-                raise EmbeddingError("Query embedding is empty")
-                
-            if not document_embeddings:
-                logger.warning("No document embeddings provided for search")
-                return []
-            
-            similarities = []
-            
-            for idx, doc_embedding in enumerate(document_embeddings):
-                if doc_embedding is not None:
-                    try:
-                        similarity = self.cosine_similarity(query_embedding, doc_embedding)
-                        similarities.append({
-                            'index': idx,
-                            'similarity': similarity
-                        })
-                    except Exception as e:
-                        logger.warning(f"Error calculating similarity for document {idx}: {e}")
-                        continue
-            
-            if not similarities:
-                logger.warning("No valid similarities calculated")
-                return []
-            
-            # Sort by similarity (highest first)
-            similarities.sort(key=lambda x: x['similarity'], reverse=True)
-            
-            # Return top k results
-            results = similarities[:top_k]
-            
-            logger.debug(f"Semantic search returned {len(results)} results")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error in semantic search: {e}")
-            raise EmbeddingError(f"Semantic search failed: {e}")
-    
-    def get_embedding_stats(self, embeddings: List[List[float]]) -> Dict[str, Any]:
-        """
-        Calculate statistics for a collection of embeddings.
-        
-        Args:
-            embeddings: List of embedding vectors
-            
-        Returns:
-            Dictionary containing embedding statistics
-        """
-        try:
-            valid_embeddings = [e for e in embeddings if e is not None]
-            
-            stats = {
-                "count": len(embeddings),
-                "valid": len(valid_embeddings),
-                "invalid": len(embeddings) - len(valid_embeddings),
-                "dimensions": 0,
-                "mean_magnitude": 0.0,
-                "std_magnitude": 0.0
-            }
-            
-            if not valid_embeddings:
-                return stats
-            
-            embeddings_array = np.array(valid_embeddings, dtype=np.float32)
-            
-            stats.update({
-                "dimensions": embeddings_array.shape[1] if len(embeddings_array.shape) > 1 else 0,
-                "mean_magnitude": float(np.mean(np.linalg.norm(embeddings_array, axis=1))),
-                "std_magnitude": float(np.std(np.linalg.norm(embeddings_array, axis=1)))
+        similarities = []
+        for i, doc_embedding in enumerate(document_embeddings):
+            similarity = self.calculate_similarity(query_embedding, doc_embedding)
+            similarities.append({
+                "index": i,
+                "similarity": similarity
             })
+        
+        # Sort by similarity (highest first)
+        similarities.sort(key=lambda x: x["similarity"], reverse=True)
+        
+        return similarities[:top_k]
+    
+    def get_available_providers(self) -> List[str]:
+        """Get list of available providers"""
+        return [name for name, provider in self.providers.items() if provider.is_available]
+    
+    def get_provider_info(self, provider: str = None) -> Dict[str, Any]:
+        """Get detailed provider information"""
+        
+        if provider:
+            if provider in self.providers:
+                return self.providers[provider].get_info()
+            else:
+                return {"error": f"Provider {provider} not found"}
+        
+        # Return info for all providers
+        info = {
+            "primary_provider": self.primary_provider,
+            "available_providers": self.get_available_providers(),
+            "provider_details": {}
+        }
+        
+        for name, provider in self.providers.items():
+            info["provider_details"][name] = provider.get_info()
+        
+        return info
+    
+    def switch_provider(self, provider_name: str) -> bool:
+        """Switch to a different embedding provider"""
+        
+        if provider_name in self.providers and self.providers[provider_name].is_available:
+            self.primary_provider = provider_name
+            logger.info(f"Switched to {provider_name} embeddings")
+            return True
+        else:
+            logger.error(f"Cannot switch to {provider_name} - not available")
+            return False
+    
+    def validate_embeddings(self, embeddings: List[List[float]]) -> Dict[str, Any]:
+        """Validate embedding quality and consistency"""
+        
+        if not embeddings:
+            return {"valid": False, "error": "No embeddings provided"}
+        
+        try:
+            # Check dimensions consistency
+            dimensions = [len(emb) for emb in embeddings]
+            if len(set(dimensions)) > 1:
+                return {
+                    "valid": False,
+                    "error": "Inconsistent embedding dimensions",
+                    "dimensions": dimensions
+                }
             
-            return stats
+            # Check for NaN or infinite values
+            embeddings_array = np.array(embeddings)
+            if np.any(np.isnan(embeddings_array)) or np.any(np.isinf(embeddings_array)):
+                return {
+                    "valid": False,
+                    "error": "Contains NaN or infinite values"
+                }
             
-        except Exception as e:
-            logger.error(f"Error calculating embedding stats: {e}")
+            # Calculate statistics
+            norms = np.linalg.norm(embeddings_array, axis=1)
+            
             return {
-                "count": len(embeddings) if embeddings else 0,
-                "valid": 0,
-                "invalid": len(embeddings) if embeddings else 0,
-                "error": str(e)
-            }
-
-class BusinessContextEmbeddings:
-    """
-    Enhanced embedding service that incorporates business context into embeddings.
-    
-    This service adds metadata context to improve embedding quality for
-    business-specific use cases in the African context.
-    """
-    
-    def __init__(self, embedding_service: EmbeddingService):
-        """
-        Initialize with an embedding service instance.
-        
-        Args:
-            embedding_service: Base embedding service to use
-        """
-        self.embedding_service = embedding_service
-        logger.info("Business context embeddings service initialized")
-        
-    def create_context_aware_embedding(self, text: str, metadata: Dict[str, Any]) -> Optional[List[float]]:
-        """
-        Create an embedding with added business context.
-        
-        Args:
-            text: Primary text content
-            metadata: Business context metadata
-            
-        Returns:
-            Context-enhanced embedding vector
-        """
-        try:
-            enhanced_text = self._enhance_text_with_context(text, metadata)
-            return self.embedding_service.create_document_embedding(enhanced_text)
-            
-        except Exception as e:
-            logger.error(f"Error creating context-aware embedding: {e}")
-            # Fallback to basic embedding
-            return self.embedding_service.create_document_embedding(text)
-    
-    def _enhance_text_with_context(self, text: str, metadata: Dict[str, Any]) -> str:
-        """
-        Enhance text with business context from metadata.
-        
-        Args:
-            text: Original text
-            metadata: Context metadata
-            
-        Returns:
-            Text enhanced with context information
-        """
-        try:
-            if not text:
-                return ""
-                
-            enhancements = []
-            
-            # Add context from metadata
-            context_fields = {
-                'country': 'Country',
-                'sector': 'Business Sector', 
-                'funding_stage': 'Funding Stage',
-                'source_type': 'Source Type',
-                'date': 'Date',
-                'type': 'Content Type'
+                "valid": True,
+                "count": len(embeddings),
+                "dimensions": dimensions[0],
+                "norm_stats": {
+                    "mean": float(np.mean(norms)),
+                    "std": float(np.std(norms)),
+                    "min": float(np.min(norms)),
+                    "max": float(np.max(norms))
+                }
             }
             
-            for field, label in context_fields.items():
-                value = metadata.get(field)
-                if value and str(value).strip():
-                    if isinstance(value, list):
-                        value = ", ".join(str(v) for v in value)
-                    enhancements.append(f"{label}: {value}")
-            
-            if enhancements:
-                context_string = " | ".join(enhancements)
-                return f"{text}\n\nContext: {context_string}"
-            
-            return text
-            
         except Exception as e:
-            logger.warning(f"Error enhancing text with context: {e}")
-            return text
+            return {
+                "valid": False,
+                "error": f"Validation failed: {str(e)}"
+            }
 
-# Global service instances
+# Global embedding manager instance
 try:
-    embedding_service = EmbeddingService()
-    business_context_embeddings = BusinessContextEmbeddings(embedding_service)
-    logger.info("Embedding services initialized successfully")
+    embedding_manager = ModernEmbeddingManager()
+    logger.info(f"Modern embedding manager initialized with {len(embedding_manager.get_available_providers())} providers")
 except Exception as e:
-    logger.error(f"Failed to initialize embedding services: {e}")
-    # Create fallback services that will raise errors when used
-    embedding_service = None
-    business_context_embeddings = None
+    logger.error(f"Failed to initialize embedding manager: {e}")
+    embedding_manager = None
+
+# For backward compatibility
+embedding_service = embedding_manager
