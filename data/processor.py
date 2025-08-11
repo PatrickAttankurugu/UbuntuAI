@@ -10,6 +10,23 @@ class DataProcessor:
         self.chunker = chunker
         self.context_enhancer = context_enhancer
         
+    def _convert_lists_to_strings(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert list values in metadata to comma-separated strings for ChromaDB compatibility"""
+        converted = {}
+        for key, value in metadata.items():
+            if isinstance(value, list):
+                # Convert list to comma-separated string
+                converted[key] = ", ".join(str(item) for item in value) if value else ""
+            elif isinstance(value, dict):
+                # Convert dict to JSON string
+                converted[key] = json.dumps(value)
+            elif value is None:
+                converted[key] = ""
+            else:
+                # Keep primitives as-is
+                converted[key] = str(value)
+        return converted
+        
     def process_funding_data(self) -> List[Dict[str, Any]]:
         processed_chunks = []
         
@@ -19,11 +36,14 @@ class DataProcessor:
             metadata = {
                 "source": "Internal Funding Database",
                 "type": "funding_opportunity",
-                "country": opportunity.get("country"),
+                "country": opportunity.get("country", ""),
                 "sector": opportunity.get("focus_sectors", []),
                 "funding_stage": opportunity.get("stage", []),
-                "funding_type": opportunity.get("type")
+                "funding_type": opportunity.get("type", "")
             }
+            
+            # Convert lists to strings for ChromaDB
+            metadata = self._convert_lists_to_strings(metadata)
             
             chunks = self.chunker.chunk_document(content, metadata)
             processed_chunks.extend(chunks)
@@ -43,6 +63,9 @@ class DataProcessor:
                 "category": "business_registration"
             }
             
+            # Convert to ChromaDB-compatible format
+            metadata = self._convert_lists_to_strings(metadata)
+            
             chunks = self.chunker.chunk_document(content, metadata)
             processed_chunks.extend(chunks)
         
@@ -55,6 +78,9 @@ class DataProcessor:
                 "country": country,
                 "category": "taxation"
             }
+            
+            # Convert to ChromaDB-compatible format
+            metadata = self._convert_lists_to_strings(metadata)
             
             chunks = self.chunker.chunk_document(content, metadata)
             processed_chunks.extend(chunks)
@@ -145,8 +171,8 @@ class DataProcessor:
                     "source": "Sample Data",
                     "type": "funding_opportunity",
                     "country": "Kenya",
-                    "sector": ["Fintech", "Agritech", "Healthtech"],
-                    "funding_stage": ["Series A", "Series B"]
+                    "sector": "Fintech, Agritech, Healthtech",  # Convert to string
+                    "funding_stage": "Series A, Series B"      # Convert to string
                 }
             },
             {
@@ -155,8 +181,8 @@ class DataProcessor:
                     "source": "Sample Data",
                     "type": "grant_program",
                     "country": "Continental",
-                    "sector": ["Agritech", "Clean Energy", "Healthcare", "Education"],
-                    "funding_stage": ["Pre-seed", "Seed"]
+                    "sector": "Agritech, Clean Energy, Healthcare, Education",  # Convert to string
+                    "funding_stage": "Pre-seed, Seed"                          # Convert to string
                 }
             }
         ]
@@ -191,7 +217,7 @@ class DataProcessor:
                     "source": "Sample Data",
                     "type": "success_story",
                     "country": "Nigeria",
-                    "sector": ["Fintech"],
+                    "sector": "Fintech",
                     "company": "Flutterwave"
                 }
             },
@@ -201,7 +227,7 @@ class DataProcessor:
                     "source": "Sample Data",
                     "type": "success_story",
                     "country": "Nigeria",
-                    "sector": ["Technology", "Education"],
+                    "sector": "Technology, Education",
                     "company": "Andela"
                 }
             }
@@ -211,6 +237,9 @@ class DataProcessor:
         
         # Process each sample through chunking
         for sample in all_samples:
+            # Ensure metadata is ChromaDB compatible
+            sample["metadata"] = self._convert_lists_to_strings(sample["metadata"])
+            
             chunks = self.chunker.chunk_document(
                 text=sample["content"],
                 metadata=sample["metadata"]
@@ -227,7 +256,13 @@ class DataProcessor:
         
         for i, chunk_data in enumerate(processed_chunks):
             documents.append(chunk_data["content"])
-            metadatas.append(chunk_data["metadata"])
+            
+            # Ensure metadata is compatible with ChromaDB
+            metadata = chunk_data["metadata"]
+            if isinstance(metadata, dict):
+                metadata = self._convert_lists_to_strings(metadata)
+            
+            metadatas.append(metadata)
             ids.append(f"chunk_{i}")
         
         return {
@@ -235,5 +270,66 @@ class DataProcessor:
             "metadatas": metadatas,
             "ids": ids
         }
+
+    def process_pdf_documents(self, pdf_directory: str = "data/documents") -> List[Dict[str, Any]]:
+        """Process PDF documents from the specified directory"""
+        import os
+        from pathlib import Path
+        
+        processed_chunks = []
+        pdf_dir = Path(pdf_directory)
+        
+        if not pdf_dir.exists():
+            os.makedirs(pdf_dir, exist_ok=True)
+            return processed_chunks
+        
+        # Find all PDF files
+        pdf_files = list(pdf_dir.glob("*.pdf"))
+        
+        for pdf_file in pdf_files:
+            try:
+                # Extract text from PDF (you'll need to install PyPDF2 or pdfplumber)
+                content = self._extract_pdf_text(pdf_file)
+                
+                if content:
+                    metadata = {
+                        "source": f"PDF Document: {pdf_file.name}",
+                        "type": "pdf_document",
+                        "filename": pdf_file.name,
+                        "category": "user_document"
+                    }
+                    
+                    # Convert to ChromaDB-compatible format
+                    metadata = self._convert_lists_to_strings(metadata)
+                    
+                    chunks = self.chunker.chunk_document(content, metadata)
+                    processed_chunks.extend(chunks)
+                    
+            except Exception as e:
+                print(f"Error processing {pdf_file}: {e}")
+                continue
+        
+        return processed_chunks
+    
+    def _extract_pdf_text(self, pdf_path) -> str:
+        """Extract text from PDF file"""
+        try:
+            import PyPDF2
+            
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                text = ""
+                
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+                
+                return text.strip()
+                
+        except ImportError:
+            print("PyPDF2 not installed. Install with: pip install PyPDF2")
+            return ""
+        except Exception as e:
+            print(f"Error extracting text from {pdf_path}: {e}")
+            return ""
 
 data_processor = DataProcessor()

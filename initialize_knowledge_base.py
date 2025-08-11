@@ -25,17 +25,43 @@ import traceback
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
-    """Setup logging configuration"""
+    """Setup logging configuration with Unicode-safe formatting"""
     level = logging.DEBUG if verbose else logging.INFO
     
+    # Create a custom formatter that avoids Unicode characters
+    class UnicodeFormatter(logging.Formatter):
+        def format(self, record):
+            # Replace problematic Unicode characters with ASCII equivalents
+            msg = super().format(record)
+            replacements = {
+                '✅': '[SUCCESS]',
+                '❌': '[ERROR]',
+                '⚠️': '[WARNING]',
+                '🔧': '[CONFIG]',
+                '📦': '[PACKAGE]',
+                '🧠': '[AI]',
+                '🎉': '[COMPLETE]',
+                '💥': '[FATAL]',
+                '⏹️': '[CANCELLED]'
+            }
+            for unicode_char, ascii_replacement in replacements.items():
+                msg = msg.replace(unicode_char, ascii_replacement)
+            return msg
+    
+    # Configure logging with safe formatter
     logging.basicConfig(
         level=level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('knowledge_base_init.log'),
-            logging.StreamHandler()
+            logging.FileHandler('knowledge_base_init.log', encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
         ]
     )
+    
+    # Apply custom formatter to all handlers
+    formatter = UnicodeFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(formatter)
     
     return logging.getLogger(__name__)
 
@@ -159,6 +185,13 @@ class KnowledgeBaseInitializer:
             success &= self._process_funding_data()
             success &= self._process_regulatory_data()
             
+            # Check for PDF documents
+            try:
+                success &= self._process_pdf_documents()
+            except Exception as e:
+                self.logger.warning(f"PDF processing failed: {e}")
+                # Don't fail the entire process if PDF processing fails
+            
             # Final statistics
             self.stats['end_time'] = datetime.now()
             self.stats['processing_time'] = (self.stats['end_time'] - self.stats['start_time']).total_seconds()
@@ -166,9 +199,9 @@ class KnowledgeBaseInitializer:
             self._log_final_stats()
             
             if success:
-                self.logger.info("✅ Knowledge base initialization completed successfully!")
+                self.logger.info("[SUCCESS] Knowledge base initialization completed successfully!")
             else:
-                self.logger.warning("⚠️ Knowledge base initialization completed with some errors")
+                self.logger.warning("[WARNING] Knowledge base initialization completed with some errors")
             
             return success
             
@@ -204,10 +237,10 @@ class KnowledgeBaseInitializer:
             if success:
                 self.stats['total_documents'] += len(prepared_data['documents'])
                 self.stats['successful_embeddings'] += len(prepared_data['documents'])
-                self.logger.info(f"✅ Successfully added {len(prepared_data['documents'])} sample documents")
+                self.logger.info(f"[SUCCESS] Successfully added {len(prepared_data['documents'])} sample documents")
             else:
                 self.stats['failed_embeddings'] += len(prepared_data['documents'])
-                self.logger.error("❌ Failed to add sample documents")
+                self.logger.error("[ERROR] Failed to add sample documents")
             
             return success
             
@@ -245,10 +278,10 @@ class KnowledgeBaseInitializer:
             if success:
                 self.stats['total_documents'] += len(prepared_data['documents'])
                 self.stats['successful_embeddings'] += len(prepared_data['documents'])
-                self.logger.info(f"✅ Successfully added {len(prepared_data['documents'])} funding documents")
+                self.logger.info(f"[SUCCESS] Successfully added {len(prepared_data['documents'])} funding documents")
             else:
                 self.stats['failed_embeddings'] += len(prepared_data['documents'])
-                self.logger.error("❌ Failed to add funding documents")
+                self.logger.error("[ERROR] Failed to add funding documents")
             
             return success
             
@@ -286,15 +319,56 @@ class KnowledgeBaseInitializer:
             if success:
                 self.stats['total_documents'] += len(prepared_data['documents'])
                 self.stats['successful_embeddings'] += len(prepared_data['documents'])
-                self.logger.info(f"✅ Successfully added {len(prepared_data['documents'])} regulatory documents")
+                self.logger.info(f"[SUCCESS] Successfully added {len(prepared_data['documents'])} regulatory documents")
             else:
                 self.stats['failed_embeddings'] += len(prepared_data['documents'])
-                self.logger.error("❌ Failed to add regulatory documents")
+                self.logger.error("[ERROR] Failed to add regulatory documents")
             
             return success
             
         except Exception as e:
             self.logger.error(f"Error processing regulatory data: {e}")
+            return False
+    
+    def _process_pdf_documents(self) -> bool:
+        """Process PDF documents if available"""
+        try:
+            self.logger.info("Checking for PDF documents...")
+            
+            # Process PDF documents
+            pdf_chunks = self.data_processor.process_pdf_documents()
+            
+            if not pdf_chunks:
+                self.logger.info("No PDF documents found to process")
+                return True
+            
+            self.logger.info(f"Generated {len(pdf_chunks)} PDF document chunks")
+            
+            # Prepare for vector store
+            prepared_data = self.data_processor.prepare_documents_for_vectorstore(pdf_chunks)
+            
+            # Create unique IDs for PDF data
+            pdf_ids = [f"pdf_{i}" for i in range(len(prepared_data['documents']))]
+            
+            # Add to vector store
+            success = self.vector_store.add_documents(
+                documents=prepared_data['documents'],
+                metadatas=prepared_data['metadatas'],
+                ids=pdf_ids
+            )
+            
+            if success:
+                self.stats['total_documents'] += len(prepared_data['documents'])
+                self.stats['successful_embeddings'] += len(prepared_data['documents'])
+                self.logger.info(f"[SUCCESS] Successfully added {len(prepared_data['documents'])} PDF documents")
+            else:
+                self.stats['failed_embeddings'] += len(prepared_data['documents'])
+                self.logger.error("[ERROR] Failed to add PDF documents")
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error processing PDF documents: {e}")
             return False
     
     def _log_final_stats(self):
@@ -361,31 +435,31 @@ def main():
             
             logger.error("\nPlease fix the above issues before running initialization.")
             logger.error("Make sure you have:")
-            logger.error("1. Set OPENAI_API_KEY in your .env file")
+            logger.error("1. Set GOOGLE_API_KEY in your .env file")
             logger.error("2. Installed all required dependencies: pip install -r requirements.txt")
             logger.error("3. Proper file permissions for the vector_db directory")
             return 1
         
-        logger.info("✅ Prerequisites check passed")
+        logger.info("[SUCCESS] Prerequisites check passed")
         
         # Initialize
         initializer = KnowledgeBaseInitializer(logger)
         success = initializer.initialize_knowledge_base(force=args.force)
         
         if success:
-            logger.info("\n🎉 Knowledge base initialization completed successfully!")
+            logger.info("\n[COMPLETE] Knowledge base initialization completed successfully!")
             logger.info("You can now run the UbuntuAI application with: streamlit run app.py")
             return 0
         else:
-            logger.error("\n❌ Knowledge base initialization failed")
+            logger.error("\n[ERROR] Knowledge base initialization failed")
             logger.error("Check the logs above for specific error details")
             return 1
             
     except KeyboardInterrupt:
-        logger.info("\n⏹️ Initialization cancelled by user")
+        logger.info("\n[CANCELLED] Initialization cancelled by user")
         return 1
     except Exception as e:
-        logger.error(f"\n💥 Fatal error: {e}")
+        logger.error(f"\n[FATAL] Fatal error: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return 1
 

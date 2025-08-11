@@ -1,4 +1,5 @@
 import re
+import json
 from typing import List, Dict, Any, Optional, Tuple
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from config.settings import settings
@@ -77,19 +78,46 @@ class BusinessContextChunker:
         
         return entities
     
+    def _convert_lists_to_strings(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert list and dict values in metadata to strings for ChromaDB compatibility"""
+        converted = {}
+        for key, value in metadata.items():
+            if isinstance(value, list):
+                # Convert list to comma-separated string
+                converted[key] = ", ".join(str(item) for item in value) if value else ""
+            elif isinstance(value, dict):
+                # Convert dict to JSON string
+                converted[key] = json.dumps(value)
+            elif value is None:
+                converted[key] = ""
+            else:
+                # Keep primitives as-is, but ensure they're strings
+                converted[key] = str(value)
+        return converted
+    
     def _create_chunk_metadata(self, 
                               chunk: str, 
                               source_metadata: Dict[str, Any], 
                               chunk_index: int) -> Dict[str, Any]:
         metadata = source_metadata.copy()
-        metadata.update({
+        
+        # Add chunk-specific metadata
+        chunk_specific = {
             'chunk_index': chunk_index,
             'chunk_size': self._count_tokens(chunk),
-            'business_contexts': self._identify_business_context(chunk),
-            'entities': self._extract_entities(chunk),
+            'business_contexts': ", ".join(self._identify_business_context(chunk)),  # Convert to string
             'chunk_summary': self._create_chunk_summary(chunk)
-        })
-        return metadata
+        }
+        
+        # Add entities as strings
+        entities = self._extract_entities(chunk)
+        for entity_type, entity_list in entities.items():
+            chunk_specific[f'entities_{entity_type}'] = ", ".join(entity_list) if entity_list else ""
+        
+        metadata.update(chunk_specific)
+        
+        # Ensure all metadata values are ChromaDB compatible
+        return self._convert_lists_to_strings(metadata)
     
     def _create_chunk_summary(self, chunk: str) -> str:
         sentences = chunk.split('. ')
@@ -210,7 +238,9 @@ class BusinessContextChunker:
             chunk = chunk_data['content']
             chunk_metadata = chunk_data['metadata']
             
-            chunk_contexts = chunk_metadata.get('business_contexts', [])
+            # Check if chunk contexts overlap with target contexts
+            chunk_contexts_str = chunk_metadata.get('business_contexts', '')
+            chunk_contexts = [ctx.strip() for ctx in chunk_contexts_str.split(',') if ctx.strip()]
             context_overlap = set(chunk_contexts) & set(target_contexts)
             
             if context_overlap:
@@ -218,8 +248,8 @@ class BusinessContextChunker:
                     sub_chunks = self.text_splitter.split_text(chunk)
                     for i, sub_chunk in enumerate(sub_chunks):
                         sub_metadata = chunk_metadata.copy()
-                        sub_metadata['sub_chunk_index'] = i
-                        sub_metadata['parent_chunk'] = chunk_data['chunk_index'] if 'chunk_index' in chunk_metadata else 0
+                        sub_metadata['sub_chunk_index'] = str(i)
+                        sub_metadata['parent_chunk'] = str(chunk_data.get('chunk_index', 0))
                         
                         enhanced_chunks.append({
                             'content': sub_chunk,
@@ -243,10 +273,16 @@ class BusinessContextChunker:
         
         for chunk in chunks:
             metadata = chunk.get('metadata', {})
-            contexts.extend(metadata.get('business_contexts', []))
-            chunk_entities = metadata.get('entities', {})
-            for entity_type, entity_list in chunk_entities.items():
-                entities.extend(entity_list)
+            
+            # Parse business contexts
+            contexts_str = metadata.get('business_contexts', '')
+            if contexts_str:
+                contexts.extend([ctx.strip() for ctx in contexts_str.split(',') if ctx.strip()])
+            
+            # Parse entities
+            for key, value in metadata.items():
+                if key.startswith('entities_') and value:
+                    entities.extend([entity.strip() for entity in value.split(',') if entity.strip()])
         
         return {
             'total_chunks': len(chunks),
