@@ -1,607 +1,580 @@
 """
-Modern LangChain Agents for UbuntuAI
-Implements agentic workflows with tool integration and self-reflection
+LangChain Agents for UbuntuAI
+Specialized agents for Ghanaian startup ecosystem (fintech, agritech, healthtech)
 """
 
 import logging
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
 
-# LangChain Agent imports
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.agents import AgentAction, AgentFinish
-from langchain_core.tools import Tool, BaseTool
-from langchain_core.prompts import PromptTemplate
+# LangChain imports
+from langchain.agents import AgentExecutor, create_openai_functions_agent
+from langchain.agents.openai_functions_agent.base import OpenAIFunctionsAgent
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools import BaseTool, tool
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain.agents.format_scratchpad import format_log_to_str
-from langchain.agents.output_parsers import ReActSingleInputOutputParser
 
-# LangGraph for complex workflows
+# LangSmith integration
 try:
-    from langgraph.graph import StateGraph, END
-    from langgraph.prebuilt import ToolExecutor
-    LANGGRAPH_AVAILABLE = True
+    from langsmith import trace
+    MONITORING_AVAILABLE = True
 except ImportError:
-    LANGGRAPH_AVAILABLE = False
+    MONITORING_AVAILABLE = False
+    def trace(name):
+        def decorator(func):
+            return func
+        return decorator
 
 from config.settings import settings
+from config.prompts import prompt_templates
 from api.llm_providers import llm_manager
-from api.rag_engine import get_rag_engine
-from api.scoring_engine import create_scoring_engine
-from knowledge_base.funding_database import funding_db
-from knowledge_base.regulatory_info import regulatory_db
 
 logger = logging.getLogger(__name__)
 
-class BusinessAssessmentTool(BaseTool):
-    """Tool for conducting business assessments"""
+class GhanaBusinessTool(BaseTool):
+    """Base tool for Ghanaian business operations"""
     
-    name = "business_assessment"
-    description = """Conduct a comprehensive business assessment for African startups. 
-    Input should be business information including description, sector, team size, stage, etc.
-    Returns detailed scoring and recommendations."""
-    
-    def __init__(self):
-        super().__init__()
-        try:
-            self.scoring_engines = create_scoring_engine()
-        except Exception as e:
-            logger.warning(f"Scoring engines not available: {e}")
-            self.scoring_engines = None
-    
-    def _run(self, business_info: str) -> str:
-        """Run business assessment"""
-        
-        if not self.scoring_engines:
-            return "Business assessment service is currently unavailable."
-        
-        try:
-            # Parse business info (expecting JSON or structured text)
-            if business_info.startswith('{'):
-                business_data = json.loads(business_info)
-            else:
-                # Extract info from text
-                business_data = self._parse_business_text(business_info)
-            
-            # Conduct assessment
-            scorer = self.scoring_engines['startup_scorer']
-            result = scorer.score_startup(business_data)
-            
-            # Format response
-            response = f"""BUSINESS ASSESSMENT RESULTS
+    def __init__(self, name: str, description: str, **kwargs):
+        super().__init__(name=name, description=description, **kwargs)
+        self.ghana_focus = True
 
-Overall Score: {result.overall_score:.2f}/1.0
-
-Component Breakdown:"""
-            
-            for component, score in result.component_scores.items():
-                status = "Strong" if score > 0.7 else "Moderate" if score > 0.5 else "Needs Work"
-                response += f"\n• {component.replace('_', ' ').title()}: {score:.2f} ({status})"
-            
-            if result.risk_factors:
-                response += f"\n\nKey Risk Factors:"
-                for risk in result.risk_factors[:3]:
-                    response += f"\n• {risk}"
-            
-            if result.recommendations:
-                response += f"\n\nRecommendations:"
-                for rec in result.recommendations[:3]:
-                    response += f"\n• {rec}"
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Business assessment failed: {e}")
-            return f"Error conducting business assessment: {str(e)}"
+@tool
+def get_ghana_regulatory_info(sector: str, region: str = "Greater Accra") -> str:
+    """
+    Get regulatory information for a specific sector in Ghana
     
-    def _parse_business_text(self, text: str) -> Dict[str, Any]:
-        """Parse business information from text"""
+    Args:
+        sector: The business sector (fintech, agritech, healthtech)
+        region: The Ghanaian region (default: Greater Accra)
+    
+    Returns:
+        Regulatory information for the specified sector and region
+    """
+    try:
+        # This would integrate with actual regulatory databases
+        # For now, return structured information based on sector
         
-        # Basic parsing - could be enhanced with NLP
-        business_data = {
-            'business_description': text,
-            'sector': 'general',
-            'team_size': 1,
-            'product_stage': 'idea',
-            'generating_revenue': False,
-            'local_team_members': True,
-            'mobile_first': True,
-            'local_market_knowledge': True
+        regulatory_info = {
+            "fintech": {
+                "Bank of Ghana": "All fintech companies must register with Bank of Ghana",
+                "GIPC": "Foreign investment registration required for international fintech",
+                "GRA": "Tax registration and compliance required",
+                "Data Protection": "Compliance with Data Protection Act 2012"
+            },
+            "agritech": {
+                "MoFA": "Ministry of Food and Agriculture registration",
+                "GSA": "Ghana Standards Authority certification for agricultural products",
+                "EPA": "Environmental Protection Agency permits for large operations",
+                "FDA": "Food and Drugs Authority for food processing"
+            },
+            "healthtech": {
+                "FDA": "Food and Drugs Authority registration and approval",
+                "MoH": "Ministry of Health compliance",
+                "GHS": "Ghana Health Service partnership requirements",
+                "Data Protection": "Patient data protection compliance"
+            }
         }
         
-        # Extract sector if mentioned
-        sectors = settings.BUSINESS_SECTORS
-        text_lower = text.lower()
-        for sector in sectors:
-            if sector.lower() in text_lower:
-                business_data['sector'] = sector
-                break
+        if sector.lower() not in regulatory_info:
+            return f"Unknown sector: {sector}. Supported sectors: fintech, agritech, healthtech"
         
-        # Extract team size
-        import re
-        team_match = re.search(r'(\d+)\s+(?:team|people|members)', text_lower)
-        if team_match:
-            business_data['team_size'] = int(team_match.group(1))
+        info = regulatory_info[sector.lower()]
+        result = f"Regulatory requirements for {sector} in {region}, Ghana:\n\n"
         
-        return business_data
+        for agency, requirement in info.items():
+            result += f"• {agency}: {requirement}\n"
+        
+        result += f"\nNote: This information is for {region}. Requirements may vary by region."
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting regulatory info: {e}")
+        return f"Error retrieving regulatory information: {str(e)}"
 
-class FundingSearchTool(BaseTool):
-    """Tool for searching funding opportunities"""
-    
-    name = "funding_search"
-    description = """Search for funding opportunities in Africa. 
-    Input should include criteria like country, sector, stage, funding type.
-    Returns relevant funding opportunities with details."""
-    
-    def _run(self, search_criteria: str) -> str:
-        """Search for funding opportunities"""
-        
-        try:
-            # Parse search criteria
-            criteria = self._parse_search_criteria(search_criteria)
-            
-            # Search funding database
-            opportunities = funding_db.search_funding(**criteria)
-            
-            if not opportunities:
-                return "No funding opportunities found matching your criteria. Try broadening your search parameters."
-            
-            # Format response
-            response = f"FUNDING OPPORTUNITIES ({len(opportunities)} found)\n"
-            
-            for i, opp in enumerate(opportunities[:5], 1):
-                response += f"\n{i}. {opp['name']} ({opp.get('type', 'N/A')})"
-                response += f"\n   Investment: {opp.get('typical_investment', 'N/A')}"
-                response += f"\n   Focus: {', '.join(opp.get('focus_sectors', []))}"
-                response += f"\n   Location: {opp.get('country', 'N/A')}"
-                
-                if opp.get('application_process'):
-                    response += f"\n   Application: {opp['application_process']}"
-                
-                if opp.get('website'):
-                    response += f"\n   Website: {opp['website']}"
-                
-                response += "\n"
-            
-            response += "\nNext Steps:"
-            response += "\n• Research each funder's portfolio and investment thesis"
-            response += "\n• Prepare pitch deck tailored to each opportunity"
-            response += "\n• Seek warm introductions when possible"
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Funding search failed: {e}")
-            return f"Error searching funding opportunities: {str(e)}"
-    
-    def _parse_search_criteria(self, criteria_text: str) -> Dict[str, Any]:
-        """Parse search criteria from text"""
-        
-        criteria = {}
-        text_lower = criteria_text.lower()
-        
-        # Extract country
-        for country in settings.AFRICAN_COUNTRIES:
-            if country.lower() in text_lower:
-                criteria['country'] = country
-                break
-        
-        # Extract sector
-        for sector in settings.BUSINESS_SECTORS:
-            if sector.lower() in text_lower:
-                criteria['sector'] = sector
-                break
-        
-        # Extract stage
-        for stage in settings.FUNDING_STAGES:
-            if stage.lower() in text_lower:
-                criteria['stage'] = stage
-                break
-        
-        # Extract funding type
-        funding_types = ['vc firm', 'accelerator', 'grant', 'government']
-        for ftype in funding_types:
-            if ftype in text_lower:
-                criteria['funding_type'] = ftype.title()
-                break
-        
-        return criteria
-
-class RegulatoryGuidanceTool(BaseTool):
-    """Tool for regulatory guidance and compliance information"""
-    
-    name = "regulatory_guidance"
-    description = """Provide regulatory guidance for business operations in Africa.
-    Input should include country and type of guidance needed (registration, tax, compliance).
-    Returns relevant regulatory information and requirements."""
-    
-    def _run(self, guidance_request: str) -> str:
-        """Provide regulatory guidance"""
-        
-        try:
-            # Parse request
-            country, guidance_type = self._parse_guidance_request(guidance_request)
-            
-            if guidance_type == 'registration':
-                return self._get_registration_guidance(country)
-            elif guidance_type == 'tax':
-                return self._get_tax_guidance(country)
-            else:
-                return self._get_general_guidance(country)
-                
-        except Exception as e:
-            logger.error(f"Regulatory guidance failed: {e}")
-            return f"Error providing regulatory guidance: {str(e)}"
-    
-    def _parse_guidance_request(self, request: str) -> tuple:
-        """Parse guidance request"""
-        
-        # Extract country
-        country = "Ghana"  # Default
-        for c in settings.AFRICAN_COUNTRIES:
-            if c.lower() in request.lower():
-                country = c
-                break
-        
-        # Extract guidance type
-        guidance_type = "general"
-        if any(word in request.lower() for word in ['register', 'registration', 'incorporate']):
-            guidance_type = "registration"
-        elif any(word in request.lower() for word in ['tax', 'taxation', 'revenue']):
-            guidance_type = "tax"
-        
-        return country, guidance_type
-    
-    def _get_registration_guidance(self, country: str) -> str:
-        """Get business registration guidance"""
-        
-        reg_info = regulatory_db.get_business_registration_info(country)
-        
-        if not reg_info:
-            return f"Registration information for {country} is not available in our database."
-        
-        response = f"BUSINESS REGISTRATION - {country.upper()}\n"
-        response += f"\nAuthority: {reg_info.get('registration_authority')}"
-        response += f"\nOnline Portal: {reg_info.get('online_portal')}"
-        response += f"\nProcessing Time: {reg_info.get('processing_time')}"
-        response += f"\nCost: {reg_info.get('cost')}"
-        
-        if reg_info.get('required_documents'):
-            response += f"\n\nRequired Documents:"
-            for doc in reg_info['required_documents']:
-                response += f"\n• {doc}"
-        
-        if reg_info.get('business_types'):
-            response += f"\n\nBusiness Types Available:"
-            for btype in reg_info['business_types']:
-                response += f"\n• {btype}"
-        
-        return response
-    
-    def _get_tax_guidance(self, country: str) -> str:
-        """Get tax guidance"""
-        
-        tax_info = regulatory_db.get_tax_information(country)
-        
-        if not tax_info:
-            return f"Tax information for {country} is not available in our database."
-        
-        response = f"TAX INFORMATION - {country.upper()}\n"
-        response += f"\nCorporate Tax Rate: {tax_info.get('corporate_tax_rate')}"
-        response += f"\nVAT Rate: {tax_info.get('vat_rate')}"
-        response += f"\nTax Authority: {tax_info.get('tax_authority')}"
-        
-        if tax_info.get('incentives'):
-            response += f"\n\nTax Incentives:"
-            for incentive in tax_info['incentives']:
-                response += f"\n• {incentive}"
-        
-        return response
-    
-    def _get_general_guidance(self, country: str) -> str:
-        """Get general regulatory guidance"""
-        
-        return regulatory_db.generate_country_guide(country)
-
-class KnowledgeSearchTool(BaseTool):
-    """Tool for searching the RAG knowledge base"""
-    
-    name = "knowledge_search"
-    description = """Search the African business knowledge base for specific information.
-    Input should be a specific question or topic to search for.
-    Returns relevant information from the knowledge base."""
-    
-    def _run(self, query: str) -> str:
-        """Search knowledge base"""
-        
-        try:
-            rag_engine = get_rag_engine()
-            
-            if not rag_engine:
-                return "Knowledge search is currently unavailable."
-            
-            # Perform RAG query
-            result = rag_engine.query(
-                question=query,
-                conversation_history=[],
-                user_context={}
-            )
-            
-            # Format response
-            response = result.get('answer', 'No relevant information found.')
-            
-            # Add source information if available
-            sources = result.get('sources', [])
-            if sources:
-                response += f"\n\nSources:"
-                for i, source in enumerate(sources[:3], 1):
-                    source_info = source.get('metadata', {}).get('source', 'Unknown')
-                    response += f"\n{i}. {source_info}"
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Knowledge search failed: {e}")
-            return f"Error searching knowledge base: {str(e)}"
-
-class ModernBusinessAgent:
+@tool
+def find_ghana_funding_opportunities(sector: str, stage: str = "seed") -> str:
     """
-    Modern business agent using LangChain with tool integration
+    Find funding opportunities for Ghanaian startups
+    
+    Args:
+        sector: The business sector (fintech, agritech, healthtech)
+        stage: Funding stage (idea, pre-seed, seed, series-a, etc.)
+    
+    Returns:
+        Available funding opportunities for the specified sector and stage
     """
-    
-    def __init__(self):
-        self.llm = None
-        self.tools = []
-        self.agent = None
-        self.agent_executor = None
-        self._initialize()
-    
-    def _initialize(self):
-        """Initialize the agent with LLM and tools"""
+    try:
+        # This would integrate with actual funding databases
+        # For now, return structured information based on sector and stage
         
-        try:
-            # Get LLM
-            if not llm_manager or not llm_manager.get_available_providers():
-                logger.error("No LLM providers available for agent")
-                return
-            
-            self.llm = llm_manager.get_langchain_llm()
-            
-            # Initialize tools
-            self.tools = [
-                BusinessAssessmentTool(),
-                FundingSearchTool(),
-                RegulatoryGuidanceTool(),
-                KnowledgeSearchTool()
+        funding_opportunities = {
+            "fintech": {
+                "idea": [
+                    "Ghana Tech Lab - Innovation Hub Support",
+                    "MEST Africa - Pre-incubation Program",
+                    "Ghana Angel Investor Network - Early Stage Support"
+                ],
+                "pre-seed": [
+                    "Ghana Enterprise Agency (GEA) - Startup Support",
+                    "Kosmos Innovation Center - Agritech & Fintech",
+                    "Impact Hub Accra - Incubation Program"
+                ],
+                "seed": [
+                    "Ghana Venture Capital Trust Fund",
+                    "Village Capital - Fintech Accelerator",
+                    "MEST Africa - Seed Investment"
+                ]
+            },
+            "agritech": {
+                "idea": [
+                    "MoFA - Agricultural Innovation Support",
+                    "Ghana Tech Lab - Agritech Focus",
+                    "Kosmos Innovation Center - Agritech Program"
+                ],
+                "pre-seed": [
+                    "GEA - Agricultural Startup Support",
+                    "USAID Feed the Future - Agritech Innovation",
+                    "GIZ - Green Innovation Support"
+                ],
+                "seed": [
+                    "Ghana Venture Capital Trust Fund - Agritech",
+                    "Acumen - Agricultural Impact Investment",
+                    "Root Capital - Agricultural Finance"
+                ]
+            },
+            "healthtech": {
+                "idea": [
+                    "Ghana Health Service - Innovation Support",
+                    "MoH - Digital Health Initiative",
+                    "Ghana Tech Lab - Healthtech Focus"
+                ],
+                "pre-seed": [
+                    "GEA - Healthtech Startup Support",
+                    "USAID - Digital Health Innovation",
+                    "WHO - Health Innovation Program"
+                ],
+                "seed": [
+                    "Ghana Venture Capital Trust Fund - Healthtech",
+                    "Acumen - Healthcare Impact Investment",
+                    "Global Innovation Fund - Health Innovation"
+                ]
+            }
+        }
+        
+        if sector.lower() not in funding_opportunities:
+            return f"Unknown sector: {sector}. Supported sectors: fintech, agritech, healthtech"
+        
+        if stage.lower() not in funding_opportunities[sector.lower()]:
+            return f"Unknown stage: {stage}. Supported stages: idea, pre-seed, seed"
+        
+        opportunities = funding_opportunities[sector.lower()][stage.lower()]
+        
+        result = f"Funding opportunities for {sector} startups at {stage} stage in Ghana:\n\n"
+        for i, opportunity in enumerate(opportunities, 1):
+            result += f"{i}. {opportunity}\n"
+        
+        result += f"\nNext steps:\n"
+        result += f"1. Research each opportunity's specific requirements\n"
+        result += f"2. Prepare your pitch deck and business plan\n"
+        result += f"3. Contact the organizations directly\n"
+        result += f"4. Network with other Ghanaian entrepreneurs in your sector"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error finding funding opportunities: {e}")
+        return f"Error retrieving funding opportunities: {str(e)}"
+
+@tool
+def analyze_ghana_market_opportunity(sector: str, region: str = "Greater Accra") -> str:
+    """
+    Analyze market opportunities for a specific sector in Ghana
+    
+    Args:
+        sector: The business sector (fintech, agritech, healthtech)
+        region: The Ghanaian region to analyze
+    
+    Returns:
+        Market analysis and opportunities for the specified sector and region
+    """
+    try:
+        # This would integrate with actual market research databases
+        # For now, return structured analysis based on sector and region
+        
+        market_analysis = {
+            "fintech": {
+                "market_size": "Ghana's fintech market is growing rapidly with mobile money adoption at 40%+",
+                "key_opportunities": [
+                    "Digital payments and mobile money solutions",
+                    "Microfinance and lending platforms",
+                    "Insurance technology (InsurTech)",
+                    "Blockchain and cryptocurrency services",
+                    "Financial inclusion solutions"
+                ],
+                "challenges": [
+                    "Regulatory compliance complexity",
+                    "Limited digital infrastructure in rural areas",
+                    "Competition from established banks",
+                    "Cybersecurity concerns"
+                ],
+                "regional_variations": {
+                    "Greater Accra": "High digital adoption, competitive market",
+                    "Ashanti": "Growing fintech adoption, moderate competition",
+                    "Western": "Emerging market, lower competition",
+                    "Northern": "Early stage, high growth potential"
+                }
+            },
+            "agritech": {
+                "market_size": "Ghana's agricultural sector contributes 20% to GDP with high tech adoption potential",
+                "key_opportunities": [
+                    "Precision farming and IoT solutions",
+                    "Agricultural supply chain optimization",
+                    "Crop monitoring and disease detection",
+                    "Agricultural fintech and insurance",
+                    "Sustainable farming technologies"
+                ],
+                "challenges": [
+                    "Limited access to technology in rural areas",
+                    "Seasonal nature of agriculture",
+                    "Infrastructure limitations",
+                    "Traditional farming practices resistance"
+                ],
+                "regional_variations": {
+                    "Greater Accra": "Urban farming, high-tech adoption",
+                    "Ashanti": "Mixed farming, moderate tech adoption",
+                    "Western": "Cocoa farming, emerging tech adoption",
+                    "Northern": "Subsistence farming, high growth potential"
+                }
+            },
+            "healthtech": {
+                "market_size": "Ghana's healthcare market is expanding with increasing digital adoption",
+                "key_opportunities": [
+                    "Telemedicine and remote healthcare",
+                    "Electronic health records and management",
+                    "Health monitoring and wearable devices",
+                    "Pharmaceutical supply chain optimization",
+                    "Mental health technology solutions"
+                ],
+                "challenges": [
+                    "Limited healthcare infrastructure in rural areas",
+                    "Regulatory approval processes",
+                    "Data privacy and security concerns",
+                    "Integration with existing healthcare systems"
+                ],
+                "regional_variations": {
+                    "Greater Accra": "Advanced healthcare, high tech adoption",
+                    "Ashanti": "Moderate healthcare, growing tech adoption",
+                    "Western": "Basic healthcare, emerging tech adoption",
+                    "Northern": "Limited healthcare, high growth potential"
+                }
+            }
+        }
+        
+        if sector.lower() not in market_analysis:
+            return f"Unknown sector: {sector}. Supported sectors: fintech, agritech, healthtech"
+        
+        analysis = market_analysis[sector.lower()]
+        regional_info = analysis["regional_variations"].get(region, "Regional information not available")
+        
+        result = f"Market Analysis for {sector} in {region}, Ghana:\n\n"
+        result += f"Market Overview:\n{analysis['market_size']}\n\n"
+        
+        result += f"Key Opportunities:\n"
+        for i, opportunity in enumerate(analysis['key_opportunities'], 1):
+            result += f"{i}. {opportunity}\n"
+        
+        result += f"\nChallenges:\n"
+        for i, challenge in enumerate(analysis['challenges'], 1):
+            result += f"{i}. {challenge}\n"
+        
+        result += f"\nRegional Context ({region}):\n{regional_info}\n\n"
+        
+        result += f"Recommendations:\n"
+        result += f"1. Focus on solving regional-specific challenges\n"
+        result += f"2. Partner with local organizations and communities\n"
+        result += f"3. Consider regulatory requirements early\n"
+        result += f"4. Build solutions that work with existing infrastructure"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error analyzing market opportunity: {e}")
+        return f"Error analyzing market opportunity: {str(e)}"
+
+@tool
+def get_ghana_business_networking_events(sector: str, region: str = "Greater Accra") -> str:
+    """
+    Get information about business networking events in Ghana
+    
+    Args:
+        sector: The business sector (fintech, agritech, healthtech)
+        region: The Ghanaian region to focus on
+    
+    Returns:
+        Upcoming networking events and opportunities
+    """
+    try:
+        # This would integrate with actual event databases
+        # For now, return structured information about regular events
+        
+        networking_events = {
+            "fintech": [
+                "Ghana Fintech Week - Annual conference in Accra",
+                "Mobile Money Conference - Quarterly events",
+                "Digital Banking Summit - Bi-annual conference",
+                "Fintech Meetups - Monthly networking events",
+                "Ghana Tech Summit - Annual tech conference"
+            ],
+            "agritech": [
+                "Ghana Agritech Conference - Annual event",
+                "Agricultural Innovation Summit - Bi-annual",
+                "FarmTech Ghana - Quarterly workshops",
+                "Agritech Meetups - Monthly networking",
+                "Ghana Food Security Forum - Annual conference"
+            ],
+            "healthtech": [
+                "Ghana Health Innovation Summit - Annual conference",
+                "Digital Health Ghana - Quarterly workshops",
+                "HealthTech Meetups - Monthly networking",
+                "Ghana Medical Conference - Annual event",
+                "Healthcare Innovation Forum - Bi-annual"
             ]
-            
-            # Create agent
-            self._create_agent()
-            
-            logger.info("Modern business agent initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize agent: {e}")
-    
-    def _create_agent(self):
-        """Create the ReAct agent"""
-        
-        # Define the prompt
-        prompt = PromptTemplate.from_template("""
-You are UbuntuAI, an expert AI assistant specializing in African business ecosystems and entrepreneurship.
-
-You have access to the following tools:
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}
-""")
-        
-        # Create agent
-        self.agent = create_react_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=prompt
-        )
-        
-        # Create agent executor
-        self.agent_executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
-            verbose=True,
-            max_iterations=settings.AGENT_MAX_ITERATIONS,
-            handle_parsing_errors=True,
-            return_intermediate_steps=True
-        )
-    
-    def query(self, 
-             question: str,
-             user_context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Process query through the agent"""
-        
-        if not self.agent_executor:
-            return {
-                "answer": "Agent is not properly initialized. Please check system configuration.",
-                "tools_used": [],
-                "success": False
-            }
-        
-        try:
-            # Add user context to question if available
-            enhanced_question = question
-            if user_context:
-                context_info = []
-                for key in ['country', 'sector', 'business_stage']:
-                    if user_context.get(key):
-                        context_info.append(f"{key}: {user_context[key]}")
-                
-                if context_info:
-                    enhanced_question = f"{question}\n\nUser Context: {' | '.join(context_info)}"
-            
-            # Execute agent
-            result = self.agent_executor.invoke({
-                "input": enhanced_question
-            })
-            
-            # Extract information
-            answer = result.get("output", "No answer generated.")
-            intermediate_steps = result.get("intermediate_steps", [])
-            
-            # Extract tools used
-            tools_used = []
-            for step in intermediate_steps:
-                if isinstance(step, tuple) and len(step) >= 1:
-                    action = step[0]
-                    if hasattr(action, 'tool'):
-                        tools_used.append(action.tool)
-            
-            return {
-                "answer": answer,
-                "tools_used": list(set(tools_used)),
-                "intermediate_steps": len(intermediate_steps),
-                "success": True
-            }
-            
-        except Exception as e:
-            logger.error(f"Agent query failed: {e}")
-            return {
-                "answer": f"I encountered an error processing your request: {str(e)}",
-                "tools_used": [],
-                "success": False
-            }
-    
-    async def query_async(self,
-                         question: str,
-                         user_context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Async version of query processing"""
-        
-        # For now, just call the sync version
-        # In future, can implement true async agent execution
-        return self.query(question, user_context)
-    
-    def get_available_tools(self) -> List[str]:
-        """Get list of available tools"""
-        return [tool.name for tool in self.tools]
-    
-    def get_agent_status(self) -> Dict[str, Any]:
-        """Get agent status information"""
-        return {
-            "initialized": bool(self.agent_executor),
-            "llm_available": bool(self.llm),
-            "tools_count": len(self.tools),
-            "available_tools": self.get_available_tools(),
-            "max_iterations": settings.AGENT_MAX_ITERATIONS
         }
+        
+        if sector.lower() not in networking_events:
+            return f"Unknown sector: {sector}. Supported sectors: fintech, agritech, healthtech"
+        
+        events = networking_events[sector.lower()]
+        
+        result = f"Networking Events for {sector} in Ghana:\n\n"
+        for i, event in enumerate(events, 1):
+            result += f"{i}. {event}\n"
+        
+        result += f"\nGeneral Networking Opportunities:\n"
+        result += f"• MEST Africa - Regular startup events and workshops\n"
+        result += f"• Ghana Tech Lab - Community meetups and hackathons\n"
+        result += f"• Impact Hub Accra - Networking events and workshops\n"
+        result += f"• Kosmos Innovation Center - Sector-specific events\n"
+        result += f"• Ghana Angel Investor Network - Investor networking events\n\n"
+        
+        result += f"Tips for Networking in Ghana:\n"
+        result += f"1. Attend events regularly to build relationships\n"
+        result += f"2. Join WhatsApp groups for your sector\n"
+        result += f"3. Connect with local business associations\n"
+        result += f"4. Participate in online communities and forums\n"
+        result += f"5. Follow up with contacts after events"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting networking events: {e}")
+        return f"Error retrieving networking events: {str(e)}"
 
-class GraphBasedAgent:
+def create_ghana_business_agent(llm_provider: str = None) -> AgentExecutor:
     """
-    Advanced agent using LangGraph for complex workflows
+    Create a specialized agent for Ghanaian business operations
+    
+    Args:
+        llm_provider: Specific LLM provider to use
+    
+    Returns:
+        Configured agent executor for Ghanaian business operations
     """
     
-    def __init__(self):
-        self.available = LANGGRAPH_AVAILABLE
-        self.graph = None
-        self.tools = []
+    try:
+        # Get the LLM
+        llm = llm_manager.get_langchain_llm(llm_provider)
         
-        if self.available:
-            self._initialize_graph()
-    
-    def _initialize_graph(self):
-        """Initialize LangGraph workflow"""
+        # Define tools
+        tools = [
+            get_ghana_regulatory_info,
+            find_ghana_funding_opportunities,
+            analyze_ghana_market_opportunity,
+            get_ghana_business_networking_events
+        ]
         
-        if not LANGGRAPH_AVAILABLE:
-            logger.warning("LangGraph not available")
-            return
+        # Create the system prompt
+        system_prompt = f"""You are UbuntuAI, a specialized AI assistant for the Ghanaian startup ecosystem. Your expertise covers fintech, agritech, and healthtech sectors across all 16 regions of Ghana.
+
+Your mission is to help Ghanaian entrepreneurs navigate:
+- Regulatory requirements and compliance
+- Funding opportunities and investment
+- Market analysis and opportunities
+- Business networking and community building
+
+CORE PRINCIPLES:
+- Focus exclusively on Ghana and Ghanaian business context
+- Provide accurate, up-to-date information about Ghana
+- Consider regional differences across Ghana's 16 regions
+- Offer practical, actionable advice for Ghanaian entrepreneurs
+- Maintain awareness of Ghana's economic and cultural context
+
+AVAILABLE TOOLS:
+- get_ghana_regulatory_info: Get regulatory requirements for specific sectors and regions
+- find_ghana_funding_opportunities: Find funding opportunities for specific sectors and stages
+- analyze_ghana_market_opportunity: Analyze market opportunities for specific sectors and regions
+- get_ghana_business_networking_events: Get information about networking events
+
+RESPONSE GUIDELINES:
+- Always provide Ghana-specific information and context
+- Use the available tools to get accurate information
+- Consider the user's sector and region when providing advice
+- Offer practical next steps and actionable recommendations
+- Cite specific Ghanaian organizations, programs, and regulations
+- Acknowledge when information might be limited or outdated
+
+Remember: You're here to empower Ghanaian entrepreneurs with knowledge and insights that can help them build successful, impactful businesses in Ghana's fintech, agritech, and healthtech sectors."""
+
+        # Create the prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
         
-        try:
-            # Define the state
-            from typing import TypedDict
-            
-            class AgentState(TypedDict):
-                messages: List[BaseMessage]
-                next_action: str
-                tools_used: List[str]
-                context: Dict[str, Any]
-            
-            # Create workflow graph
-            workflow = StateGraph(AgentState)
-            
-            # Define nodes
-            workflow.add_node("analyze", self._analyze_query)
-            workflow.add_node("search", self._search_knowledge)
-            workflow.add_node("assess", self._assess_business)
-            workflow.add_node("recommend", self._generate_recommendations)
-            
-            # Define edges
-            workflow.add_edge("analyze", "search")
-            workflow.add_edge("search", "assess")
-            workflow.add_edge("assess", "recommend")
-            workflow.add_edge("recommend", END)
-            
-            # Set entry point
-            workflow.set_entry_point("analyze")
-            
-            # Compile graph
-            self.graph = workflow.compile()
-            
-            logger.info("LangGraph agent initialized")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize LangGraph agent: {e}")
-            self.available = False
-    
-    def _analyze_query(self, state):
-        """Analyze the user query"""
-        # Implementation for query analysis
-        return state
-    
-    def _search_knowledge(self, state):
-        """Search knowledge base"""
-        # Implementation for knowledge search
-        return state
-    
-    def _assess_business(self, state):
-        """Assess business if applicable"""
-        # Implementation for business assessment
-        return state
-    
-    def _generate_recommendations(self, state):
-        """Generate final recommendations"""
-        # Implementation for recommendations
-        return state
+        # Create the agent
+        agent = create_openai_functions_agent(llm, tools, prompt)
+        
+        # Create the executor
+        agent_executor = AgentExecutor(
+            agent=agent,
+            tools=tools,
+            verbose=True,
+            max_iterations=5,
+            early_stopping_method="generate",
+            handle_parsing_errors=True
+        )
+        
+        logger.info(f"Ghana business agent created successfully with {llm_provider or 'default'} provider")
+        return agent_executor
+        
+    except Exception as e:
+        logger.error(f"Error creating Ghana business agent: {e}")
+        raise
 
-# Factory function for creating agents
-def create_ghana_business_agent() -> ModernBusinessAgent:
-    """Create and return a modern Ghana business agent"""
-    return ModernBusinessAgent()
+def create_ghana_sector_specialist_agent(sector: str, llm_provider: str = None) -> AgentExecutor:
+    """
+    Create a specialized agent for a specific Ghanaian sector
+    
+    Args:
+        sector: The sector to specialize in (fintech, agritech, healthtech)
+        llm_provider: Specific LLM provider to use
+    
+    Returns:
+        Configured agent executor for the specific sector
+    """
+    
+    try:
+        if sector.lower() not in settings.GHANA_STARTUP_SECTORS:
+            raise ValueError(f"Invalid sector: {sector}. Must be one of {settings.GHANA_STARTUP_SECTORS}")
+        
+        # Get the LLM
+        llm = llm_manager.get_langchain_llm(llm_provider)
+        
+        # Define sector-specific tools
+        base_tools = [
+            get_ghana_regulatory_info,
+            find_ghana_funding_opportunities,
+            analyze_ghana_market_opportunity,
+            get_ghana_business_networking_events
+        ]
+        
+        # Create sector-specific system prompt
+        sector_prompts = {
+            "fintech": """You are UbuntuAI, a specialized AI assistant for Ghana's fintech sector. You help Ghanaian fintech entrepreneurs navigate regulatory compliance, funding opportunities, and market development.
 
-def create_graph_agent() -> Optional[GraphBasedAgent]:
-    """Create and return a graph-based agent if available"""
-    if LANGGRAPH_AVAILABLE:
-        return GraphBasedAgent()
-    else:
-        logger.warning("LangGraph not available - cannot create graph agent")
-        return None
+Focus areas:
+- Bank of Ghana regulations and compliance
+- Mobile money and digital payments
+- Financial inclusion and innovation
+- Fintech partnerships and collaborations
+- Ghanaian fintech ecosystem development""",
+            
+            "agritech": """You are UbuntuAI, a specialized AI assistant for Ghana's agritech sector. You help Ghanaian agritech entrepreneurs leverage technology to transform agriculture.
 
-# Global agent instance
-try:
-    business_agent = create_ghana_business_agent()
-    logger.info("Business agent created successfully")
-except Exception as e:
-    logger.error(f"Failed to create business agent: {e}")
-    business_agent = None
+Focus areas:
+- Ministry of Food and Agriculture programs
+- Agricultural technology adoption
+- Sustainable farming practices
+- Agricultural supply chain optimization
+- Ghanaian agricultural innovation""",
+            
+            "healthtech": """You are UbuntuAI, a specialized AI assistant for Ghana's healthtech sector. You help Ghanaian healthtech entrepreneurs improve healthcare delivery through technology.
+
+Focus areas:
+- Food and Drugs Authority compliance
+- Digital health solutions
+- Healthcare accessibility
+- Medical technology innovation
+- Ghanaian healthcare system integration"""
+        }
+        
+        system_prompt = f"""{sector_prompts[sector.lower()]}
+
+Your mission is to provide expert guidance for {sector} entrepreneurs in Ghana, considering:
+- Sector-specific regulatory requirements
+- Industry-specific funding opportunities
+- Market dynamics and competition
+- Technology trends and innovation
+- Regional variations across Ghana
+
+Use the available tools to provide accurate, actionable information specific to the {sector} sector in Ghana."""
+
+        # Create the prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
+        
+        # Create the agent
+        agent = create_openai_functions_agent(llm, base_tools, prompt)
+        
+        # Create the executor
+        agent_executor = AgentExecutor(
+            agent=agent,
+            tools=base_tools,
+            verbose=True,
+            max_iterations=5,
+            early_stopping_method="generate",
+            handle_parsing_errors=True
+        )
+        
+        logger.info(f"Ghana {sector} specialist agent created successfully")
+        return agent_executor
+        
+    except Exception as e:
+        logger.error(f"Error creating Ghana {sector} specialist agent: {e}")
+        raise
+
+def get_available_ghana_agents() -> List[str]:
+    """Get list of available Ghanaian business agents"""
+    return ["general", "fintech", "agritech", "healthtech"]
+
+def create_ghana_agent_by_type(agent_type: str = "general", llm_provider: str = None) -> AgentExecutor:
+    """
+    Create a Ghanaian business agent by type
+    
+    Args:
+        agent_type: Type of agent to create (general, fintech, agritech, healthtech)
+        llm_provider: Specific LLM provider to use
+    
+    Returns:
+        Configured agent executor
+    """
+    
+    try:
+        if agent_type == "general":
+            return create_ghana_business_agent(llm_provider)
+        elif agent_type in settings.GHANA_STARTUP_SECTORS:
+            return create_ghana_sector_specialist_agent(agent_type, llm_provider)
+        else:
+            raise ValueError(f"Invalid agent type: {agent_type}. Must be 'general' or one of {settings.GHANA_STARTUP_SECTORS}")
+            
+    except Exception as e:
+        logger.error(f"Error creating Ghana agent by type: {e}")
+        raise

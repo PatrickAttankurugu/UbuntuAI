@@ -189,32 +189,44 @@ class ModernRAGSettings:
         self.EVAL_DATASET_PATH = os.getenv("EVAL_DATASET_PATH", "./data/eval_dataset.json")
     
     def _load_business_context(self):
-        """Load business context data"""
-        self.AFRICAN_COUNTRIES = [
-            "Nigeria", "Kenya", "South Africa", "Ghana", "Egypt", "Morocco",
-            "Tunisia", "Uganda", "Tanzania", "Rwanda", "Senegal", "Ivory Coast",
-            "Ethiopia", "Cameroon", "Botswana", "Zambia", "Zimbabwe", "Malawi",
-            "Mozambique", "Madagascar", "Mali", "Burkina Faso", "Guinea",
-            "Benin", "Togo", "Liberia", "Sierra Leone", "Chad", "Niger",
-            "Central African Republic", "Democratic Republic of Congo",
-            "Republic of Congo", "Gabon", "Equatorial Guinea", "São Tomé and Príncipe",
-            "Cape Verde", "Comoros", "Mauritius", "Seychelles", "Djibouti",
-            "Eritrea", "Somalia", "South Sudan", "Sudan", "Libya", "Algeria",
-            "Western Sahara", "Mauritania", "Gambia", "Guinea-Bissau",
-            "Burundi", "Lesotho", "Swaziland", "Angola", "Namibia"
+        """Load business context data focused on Ghanaian startup ecosystem"""
+        # Focus only on Ghana
+        self.GHANA_REGIONS = [
+            "Greater Accra", "Ashanti", "Western", "Central", "Eastern", 
+            "Volta", "Northern", "Upper East", "Upper West", "Bono", 
+            "Bono East", "Ahafo", "Savannah", "North East", "Oti"
         ]
         
-        self.BUSINESS_SECTORS = [
-            "Fintech", "Agritech", "Healthtech", "Edtech", "E-commerce",
-            "Logistics", "Energy", "Clean Technology", "Manufacturing",
-            "Real Estate", "Tourism", "Media", "Telecommunications",
-            "Retail", "Food & Beverage", "Transportation", "Construction",
-            "Mining", "Oil & Gas", "Water", "Waste Management"
+        # Focus only on the three target sectors
+        self.GHANA_STARTUP_SECTORS = [
+            "Fintech", "Agritech", "Healthtech"
         ]
         
-        self.FUNDING_STAGES = [
+        # Ghana-specific funding stages and sources
+        self.GHANA_FUNDING_STAGES = [
             "Idea", "Pre-seed", "Seed", "Series A", "Series B", "Series C",
             "Growth", "Bridge", "Mezzanine", "IPO", "Grant", "Government"
+        ]
+        
+        # Ghana-specific business entities
+        self.GHANA_BUSINESS_ENTITIES = [
+            "Ghana Investment Promotion Centre (GIPC)",
+            "Ghana Enterprise Agency (GEA)",
+            "Bank of Ghana (BoG)",
+            "Ghana Revenue Authority (GRA)",
+            "Registrar General's Department",
+            "Ghana Standards Authority (GSA)",
+            "Food and Drugs Authority (FDA)",
+            "Ministry of Food and Agriculture (MoFA)",
+            "Ministry of Health (MoH)",
+            "Ministry of Finance (MoF)"
+        ]
+        
+        # Ghana-specific startup ecosystem organizations
+        self.GHANA_ECOSYSTEM_ORGS = [
+            "MEST Africa", "Kosmos Innovation Center", "Impact Hub Accra",
+            "Ghana Tech Lab", "iSpace Foundation", "Village Capital",
+            "Ghana Angel Investor Network", "Ghana Venture Capital Trust Fund"
         ]
     
     def _load_ui_config(self):
@@ -329,8 +341,8 @@ class ModernRAGSettings:
             "use_ragas_evaluation": self.USE_RAGAS_EVALUATION,
             "available_llm_providers": self.get_available_llm_providers(),
             "available_embedding_providers": self.get_available_embedding_providers(),
-            "supported_countries": len(self.AFRICAN_COUNTRIES),
-            "supported_sectors": len(self.BUSINESS_SECTORS)
+            "supported_countries": len(self.GHANA_REGIONS),
+            "supported_sectors": len(self.GHANA_STARTUP_SECTORS)
         }
 
 # Global settings instance

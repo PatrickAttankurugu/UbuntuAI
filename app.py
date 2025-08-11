@@ -38,12 +38,12 @@ except ImportError as e:
 # Page configuration
 st.set_page_config(
     page_title=settings.APP_TITLE,
-    page_icon="🚀",
+    page_icon="🇬🇭",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Modern CSS styling
+# Modern CSS styling with Ghanaian theme
 st.markdown("""
 <style>
     /* Import modern fonts */
@@ -51,7 +51,7 @@ st.markdown("""
     
     /* Global styles */
     .stApp {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #CE1126 0%, #FCD116 50%, #006B3F 100%);
         font-family: 'Inter', sans-serif;
     }
     
@@ -62,7 +62,7 @@ st.markdown("""
         max-width: 1200px;
     }
     
-    /* Header styling */
+    /* Header styling with Ghanaian colors */
     .main-header {
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(20px);
@@ -71,11 +71,11 @@ st.markdown("""
         box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
         text-align: center;
         margin-bottom: 2rem;
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        border: 3px solid #CE1126;
     }
     
     .main-header h1 {
-        color: #2D3748;
+        color: #CE1126;
         font-weight: 700;
         font-size: 2.5rem;
         margin-bottom: 0.5rem;
@@ -83,9 +83,9 @@ st.markdown("""
     }
     
     .main-header p {
-        color: #4A5568;
+        color: #006B3F;
         font-size: 1.125rem;
-        font-weight: 400;
+        font-weight: 500;
         margin: 0;
     }
     
@@ -96,565 +96,397 @@ st.markdown("""
         border-radius: 20px;
         padding: 2rem;
         box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        border: 2px solid #FCD116;
         margin-bottom: 2rem;
     }
     
-    .chat-message {
-        background: linear-gradient(135deg, #f8f9ff 0%, #e8eeff 100%);
-        padding: 1.5rem;
-        border-radius: 16px;
-        border-left: 4px solid #667eea;
-        margin: 1rem 0;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    }
-    
-    .response-header {
-        color: #2D3748;
-        font-weight: 600;
-        font-size: 1.25rem;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    /* Sidebar styling */
-    .css-1d391kg {
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(20px);
-    }
-    
-    .sidebar-section {
-        background: rgba(248, 250, 252, 0.8);
-        padding: 1.5rem;
-        border-radius: 16px;
-        margin: 1rem 0;
-        border: 1px solid rgba(226, 232, 240, 0.8);
-    }
-    
-    /* Metrics and stats */
-    .metric-card {
-        background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%);
-        padding: 1.5rem;
-        border-radius: 16px;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-        border: 1px solid rgba(226, 232, 240, 0.8);
-        margin: 0.5rem 0;
-        text-align: center;
-    }
-    
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #667eea;
-        margin-bottom: 0.25rem;
-    }
-    
-    .metric-label {
+    /* Sector badges */
+    .sector-badge {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        margin: 0.25rem;
+        border-radius: 25px;
         font-size: 0.875rem;
-        color: #64748B;
-        font-weight: 500;
+        font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
     
-    /* Status indicators */
-    .status-success {
-        background: linear-gradient(135deg, #10B981, #059669);
-        color: white;
-        padding: 0.75rem 1rem;
-        border-radius: 12px;
-        font-weight: 500;
-        margin: 0.5rem 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    .status-error {
-        background: linear-gradient(135deg, #EF4444, #DC2626);
-        color: white;
-        padding: 0.75rem 1rem;
-        border-radius: 12px;
-        font-weight: 500;
-        margin: 0.5rem 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    .status-warning {
-        background: linear-gradient(135deg, #F59E0B, #D97706);
-        color: white;
-        padding: 0.75rem 1rem;
-        border-radius: 12px;
-        font-weight: 500;
-        margin: 0.5rem 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    /* Action buttons */
-    .action-button {
+    .sector-fintech {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
+    }
+    
+    .sector-agritech {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+    }
+    
+    .sector-healthtech {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+        color: white;
+    }
+    
+    /* Ghana flag colors */
+    .ghana-red { color: #CE1126; }
+    .ghana-yellow { color: #FCD116; }
+    .ghana-green { color: #006B3F; }
+    
+    /* Button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, #CE1126 0%, #FCD116 100%);
+        color: white;
         border: none;
-        padding: 1rem 2rem;
-        border-radius: 12px;
+        border-radius: 10px;
+        padding: 0.75rem 1.5rem;
         font-weight: 600;
-        cursor: pointer;
         transition: all 0.3s ease;
-        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
-        width: 100%;
-        margin: 0.5rem 0;
     }
     
-    .action-button:hover {
+    .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 12px 25px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 10px 20px rgba(206, 17, 38, 0.3);
     }
     
-    /* Follow-up questions */
-    .follow-up-question {
-        background: rgba(102, 126, 234, 0.1);
-        border: 1px solid rgba(102, 126, 234, 0.2);
+    /* Chat message styling */
+    .chat-message {
         padding: 1rem;
-        border-radius: 12px;
-        margin: 0.5rem 0;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    
-    .follow-up-question:hover {
-        background: rgba(102, 126, 234, 0.15);
-        transform: translateX(4px);
-    }
-    
-    /* Sources section */
-    .sources-container {
-        background: rgba(248, 250, 252, 0.8);
-        border-radius: 16px;
-        padding: 1.5rem;
         margin: 1rem 0;
-        border: 1px solid rgba(226, 232, 240, 0.8);
+        border-radius: 15px;
+        border-left: 4px solid #FCD116;
     }
     
-    .source-item {
-        background: white;
-        padding: 1rem;
-        border-radius: 12px;
-        margin: 0.75rem 0;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-        border-left: 4px solid #667eea;
+    .user-message {
+        background: rgba(206, 17, 38, 0.1);
+        border-left-color: #CE1126;
     }
     
-    /* Text input styling */
-    .stTextArea textarea {
-        border-radius: 16px;
-        border: 2px solid rgba(102, 126, 234, 0.2);
-        padding: 1rem;
-        font-family: 'Inter', sans-serif;
-        transition: all 0.3s ease;
-    }
-    
-    .stTextArea textarea:focus {
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-    }
-    
-    /* Hide default streamlit styling */
-    .css-1y4p8pa {
-        padding-top: 0;
-    }
-    
-    .css-1d391kg .css-1y4p8pa {
-        padding-top: 1rem;
-    }
-    
-    /* Responsive design */
-    @media (max-width: 768px) {
-        .main-header {
-            padding: 2rem 1rem;
-        }
-        
-        .main-header h1 {
-            font-size: 2rem;
-        }
-        
-        .chat-container {
-            padding: 1.5rem;
-        }
+    .assistant-message {
+        background: rgba(0, 107, 63, 0.1);
+        border-left-color: #006B3F;
     }
 </style>
-""", unsafe_allow_html=True)
+""")
 
 def validate_user_input(query: str) -> tuple[bool, str]:
-    """
-    Validate user input for safety and basic requirements
+    """Validate user input for Ghanaian startup ecosystem focus"""
     
-    Args:
-        query: User's input query
-        
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
     if not query or not query.strip():
-        return False, "Please enter a question"
+        return False, "Please enter a question about the Ghanaian startup ecosystem."
     
-    if len(query.strip()) < 3:
-        return False, "Question too short - please provide more details"
+    query_lower = query.lower().strip()
     
-    if len(query) > 2000:
-        return False, "Question too long - please keep it under 2000 characters"
+    # Check if query is relevant to Ghanaian startup ecosystem
+    ghana_keywords = [
+        "ghana", "ghanian", "accra", "kumasi", "tamale", "kumasi", "tema",
+        "fintech", "agritech", "healthtech", "startup", "entrepreneur",
+        "business", "investment", "funding", "regulation", "compliance"
+    ]
     
-    # Basic safety check for malicious content
-    dangerous_patterns = ['<script', 'javascript:', 'eval(', 'exec(']
-    query_lower = query.lower()
-    if any(pattern in query_lower for pattern in dangerous_patterns):
-        return False, "Invalid characters detected in input"
+    if not any(keyword in query_lower for keyword in ghana_keywords):
+        return False, "Please ask a question related to the Ghanaian startup ecosystem (fintech, agritech, or healthtech)."
+    
+    if len(query.strip()) < 10:
+        return False, "Please provide a more detailed question (at least 10 characters)."
+    
+    if len(query.strip()) > 1000:
+        return False, "Question is too long. Please keep it under 1000 characters."
     
     return True, ""
 
 def safe_execute(func, *args, **kwargs):
-    """
-    Safely execute a function with error handling and logging
-    
-    Args:
-        func: Function to execute
-        *args, **kwargs: Arguments for the function
-        
-    Returns:
-        Function result or None if error occurred
-    """
+    """Safely execute functions with error handling"""
     try:
         return func(*args, **kwargs)
     except Exception as e:
-        logger.error(f"Error in {func.__name__}: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Error executing {func.__name__}: {e}")
         return None
 
 def initialize_session_state():
-    """Initialize Streamlit session state with default values"""
-    if 'chat_history' not in st.session_state:
+    """Initialize Streamlit session state"""
+    if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     
-    if 'user_profile' not in st.session_state:
-        st.session_state.user_profile = {
-            'name': '',
-            'country': 'Ghana',
-            'sector': 'Agritech',
-            'business_stage': 'Pre-seed',
-            'team_size': 1,
-            'experience_level': 'First-time entrepreneur'
-        }
+    if "current_provider" not in st.session_state:
+        st.session_state.current_provider = settings.PRIMARY_LLM_PROVIDER
     
-    if 'app_initialized' not in st.session_state:
-        st.session_state.app_initialized = False
+    if "user_profile" not in st.session_state:
+        st.session_state.user_profile = {
+            "sector": "general",
+            "region": "Greater Accra",
+            "experience_level": "beginner"
+        }
 
 def display_system_status():
-    """Display system status and configuration in sidebar"""
-    with st.sidebar:
-        st.markdown("### 🔧 System Status")
-        
-        # Settings validation
-        try:
-            is_configured = settings.validate_config()
-            if is_configured:
-                st.markdown('<div class="status-success">✅ Configuration Valid</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="status-error">❌ Configuration Issues</div>', unsafe_allow_html=True)
-        except Exception as e:
-            st.markdown(f'<div class="status-error">❌ Config Error: {str(e)[:50]}...</div>', unsafe_allow_html=True)
-        
-        # API status
-        if settings.GOOGLE_API_KEY:
-            st.markdown('<div class="status-success">✅ Gemini API Configured</div>', unsafe_allow_html=True)
+    """Display system status and configuration"""
+    
+    st.sidebar.markdown("## 🇬🇭 System Status")
+    
+    # Provider status
+    available_providers = settings.get_available_llm_providers()
+    current_provider = st.session_state.current_provider
+    
+    st.sidebar.markdown("### 🤖 LLM Providers")
+    for provider in available_providers:
+        status = "🟢" if provider == current_provider else "⚪"
+        st.sidebar.markdown(f"{status} {provider.title()}")
+    
+    # Vector store status
+    st.sidebar.markdown("### 📚 Knowledge Base")
+    try:
+        if rag_engine and rag_engine.vector_store:
+            st.sidebar.markdown("🟢 Vector store connected")
         else:
-            st.markdown('<div class="status-error">❌ Gemini API Key Missing</div>', unsafe_allow_html=True)
-        
-        # WhatsApp status
-        whatsapp_config = settings.get_whatsapp_config()
-        if whatsapp_config:
-            st.markdown('<div class="status-success">✅ WhatsApp Integration Ready</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="status-warning">⚠️ WhatsApp Not Configured</div>', unsafe_allow_html=True)
-        
-        # System info
-        st.markdown("### 📊 System Info")
-        config_info = settings.to_dict()
-        
-        # Metrics cards
-        st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-value">{config_info["supported_countries"]}</div>
-            <div class="metric-label">Countries</div>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-value">{config_info["supported_sectors"]}</div>
-            <div class="metric-label">Sectors</div>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        st.write(f"**Model**: {config_info['embedding_model']}")
+            st.sidebar.markdown("🔴 Vector store not connected")
+    except:
+        st.sidebar.markdown("🔴 Vector store status unknown")
+    
+    # Ghanaian focus indicators
+    st.sidebar.markdown("### 🇬🇭 Ghanaian Focus")
+    st.sidebar.markdown(f"🎯 **Sectors:** {', '.join(settings.GHANA_STARTUP_SECTORS)}")
+    st.sidebar.markdown(f"📍 **Regions:** {len(settings.GHANA_REGIONS)} regions")
+    
+    # Performance metrics
+    st.sidebar.markdown("### 📊 Performance")
+    st.sidebar.markdown(f"⚡ **Strategy:** {settings.RETRIEVAL_STRATEGY}")
+    st.sidebar.markdown(f"🔍 **Chunking:** {settings.CHUNKING_STRATEGY}")
+    st.sidebar.markdown(f"📈 **Reranking:** {'Enabled' if settings.USE_RERANKING else 'Disabled'}")
 
 def display_user_profile():
-    """Display and manage user profile in sidebar"""
-    with st.sidebar:
-        st.markdown("### 👤 Your Profile")
-        
-        with st.form("user_profile_form"):
-            st.session_state.user_profile['name'] = st.text_input(
-                "Name", 
-                value=st.session_state.user_profile.get('name', ''),
-                help="Your name for personalized responses"
-            )
-            
-            st.session_state.user_profile['country'] = st.selectbox(
-                "Country",
-                options=settings.AFRICAN_COUNTRIES,
-                index=settings.AFRICAN_COUNTRIES.index(st.session_state.user_profile.get('country', 'Ghana')),
-                help="Your business location"
-            )
-            
-            st.session_state.user_profile['sector'] = st.selectbox(
-                "Business Sector",
-                options=settings.BUSINESS_SECTORS,
-                index=settings.BUSINESS_SECTORS.index(st.session_state.user_profile.get('sector', 'Agritech')),
-                help="Your industry focus"
-            )
-            
-            # Fix the business stage selection
-            current_stage = st.session_state.user_profile.get('business_stage', 'Pre-seed')
-            # Ensure the current stage exists in the list, if not use Pre-seed
-            if current_stage not in settings.FUNDING_STAGES:
-                current_stage = 'Pre-seed'
-                st.session_state.user_profile['business_stage'] = current_stage
-            
-            st.session_state.user_profile['business_stage'] = st.selectbox(
-                "Business Stage",
-                options=settings.FUNDING_STAGES,
-                index=settings.FUNDING_STAGES.index(current_stage),
-                help="Current stage of your business"
-            )
-            
-            st.session_state.user_profile['team_size'] = st.number_input(
-                "Team Size",
-                min_value=1,
-                max_value=100,
-                value=st.session_state.user_profile.get('team_size', 1),
-                help="Number of team members"
-            )
-            
-            if st.form_submit_button("💾 Update Profile"):
-                st.success("Profile updated!")
-                logger.info(f"User profile updated: {st.session_state.user_profile}")
+    """Display and allow editing of user profile"""
+    
+    st.sidebar.markdown("## 👤 Your Profile")
+    
+    # Sector selection
+    sector = st.sidebar.selectbox(
+        "🎯 Primary Sector",
+        options=settings.GHANA_STARTUP_SECTORS,
+        index=settings.GHANA_STARTUP_SECTORS.index(st.session_state.user_profile["sector"])
+        if st.session_state.user_profile["sector"] in settings.GHANA_STARTUP_SECTORS else 0
+    )
+    
+    # Region selection
+    region = st.sidebar.selectbox(
+        "📍 Primary Region",
+        options=settings.GHANA_REGIONS,
+        index=settings.GHANA_REGIONS.index(st.session_state.user_profile["region"])
+        if st.session_state.user_profile["region"] in settings.GHANA_REGIONS else 0
+    )
+    
+    # Experience level
+    experience_levels = ["beginner", "intermediate", "advanced", "expert"]
+    experience = st.sidebar.selectbox(
+        "🚀 Experience Level",
+        options=experience_levels,
+        index=experience_levels.index(st.session_state.user_profile["experience_level"])
+    )
+    
+    # Update profile
+    if st.sidebar.button("💾 Update Profile"):
+        st.session_state.user_profile.update({
+            "sector": sector,
+            "region": region,
+            "experience_level": experience
+        })
+        st.sidebar.success("Profile updated!")
+    
+    # Display current profile
+    st.sidebar.markdown("### Current Profile:")
+    st.sidebar.markdown(f"**Sector:** {sector}")
+    st.sidebar.markdown(f"**Region:** {region}")
+    st.sidebar.markdown(f"**Experience:** {experience.title()}")
 
 def process_user_query(query: str) -> Optional[Dict[str, Any]]:
-    """
-    Process user query through the AI system
+    """Process user query using the RAG engine"""
     
-    Args:
-        query: User's question
-        
-    Returns:
-        Response dictionary or None if error
-    """
     try:
-        # Create user context from profile
-        user_context = st.session_state.user_profile.copy()
+        # Get user context
+        user_context = {
+            "sector": st.session_state.user_profile["sector"],
+            "region": st.session_state.user_profile["region"],
+            "experience_level": st.session_state.user_profile["experience_level"],
+            "current_provider": st.session_state.current_provider
+        }
         
-        # Add conversation history context
-        if st.session_state.chat_history:
-            recent_history = st.session_state.chat_history[-5:]  # Last 5 exchanges
-            user_context['recent_conversation'] = recent_history
-        
-        # Process through RAG engine
-        with st.spinner("🤖 Analyzing your question..."):
+        # Process query
+        if rag_engine:
             response = rag_engine.query(
                 question=query,
                 conversation_history=st.session_state.chat_history,
-                user_context=user_context
+                user_context=user_context,
+                provider=st.session_state.current_provider
             )
-        
-        if response and response.get('answer'):
-            # Log successful query
-            logger.info(f"Query processed successfully for user: {user_context.get('name', 'Anonymous')}")
             return response
         else:
-            st.error("No response generated. Please try rephrasing your question.")
+            st.error("RAG engine not available")
             return None
             
     except Exception as e:
-        logger.error(f"Error processing query: {str(e)}")
-        st.error(f"Sorry, I encountered an error: {str(e)}")
+        logger.error(f"Error processing query: {e}")
+        st.error(f"Error processing your question: {str(e)}")
         return None
 
 def display_response(response: Dict[str, Any]):
-    """Display the AI response with proper formatting"""
+    """Display the RAG response with Ghanaian styling"""
+    
     if not response:
         return
     
-    # Main answer
-    st.markdown(f'''
-    <div class="chat-container">
-        <div class="response-header">🤖 UbuntuAI Response</div>
-        <div class="chat-message">{response["answer"]}</div>
-    </div>
-    ''', unsafe_allow_html=True)
+    # Display main answer
+    st.markdown("### 🤖 UbuntuAI Response")
     
-    # Confidence and sources
-    col1, col2 = st.columns(2)
+    answer_container = st.container()
+    with answer_container:
+        st.markdown(response.get("answer", "No answer provided"))
     
-    with col1:
-        confidence = response.get('confidence', 0)
-        if confidence > 0:
-            st.markdown(f'''
-            <div class="metric-card">
-                <div class="metric-value">{confidence:.1%}</div>
-                <div class="metric-label">Confidence</div>
-            </div>
-            ''', unsafe_allow_html=True)
+    # Display confidence score
+    confidence = response.get("confidence", 0)
+    if confidence > 0:
+        st.markdown(f"**Confidence:** {confidence:.1%}")
     
-    with col2:
-        sources_count = len(response.get('sources', []))
-        if sources_count > 0:
-            st.markdown(f'''
-            <div class="metric-card">
-                <div class="metric-value">{sources_count}</div>
-                <div class="metric-label">Sources Used</div>
-            </div>
-            ''', unsafe_allow_html=True)
+    # Display sources
+    sources = response.get("sources", [])
+    if sources:
+        st.markdown("### 📚 Sources")
+        for i, source in enumerate(sources[:5]):  # Limit to top 5 sources
+            with st.expander(f"Source {i+1}: {source.get('title', 'Unknown')}"):
+                st.markdown(f"**Content:** {source.get('content', 'No content')[:200]}...")
+                st.markdown(f"**Relevance:** {source.get('relevance', 'Unknown')}")
     
-    # Follow-up questions
-    if response.get('follow_up_questions'):
-        st.markdown("### 💡 Follow-up Questions")
-        for i, question in enumerate(response['follow_up_questions'], 1):
-            if st.button(f"{i}. {question}", key=f"followup_{i}", help="Click to explore this topic"):
-                st.session_state['followup_query'] = question
+    # Display follow-up questions
+    follow_ups = response.get("follow_up_questions", [])
+    if follow_ups:
+        st.markdown("### 💡 Suggested Follow-up Questions")
+        for i, question in enumerate(follow_ups):
+            if st.button(f"❓ {question}", key=f"followup_{i}"):
+                st.session_state.user_input = question
                 st.rerun()
     
-    # Sources (collapsible)
-    if response.get('sources'):
-        with st.expander("📚 Sources & References", expanded=False):
-            for i, source in enumerate(response['sources'], 1):
-                st.markdown(f'''
-                <div class="source-item">
-                    <strong>Source {i}:</strong><br>
-                    {source.get('content_preview', '')}
-                </div>
-                ''', unsafe_allow_html=True)
-                
-                if source.get('metadata'):
-                    st.json(source['metadata'])
+    # Display processing metadata
+    with st.expander("🔍 Processing Details"):
+        st.markdown(f"**Provider:** {response.get('provider', 'Unknown')}")
+        st.markdown(f"**Processing Time:** {response.get('processing_time', 'Unknown')}")
+        st.markdown(f"**Chunks Retrieved:** {response.get('chunks_retrieved', 'Unknown')}")
 
 def main():
     """Main application function"""
-    try:
-        # Initialize session state
-        initialize_session_state()
-        
-        # Header
-        st.markdown(f'''
-        <div class="main-header">
-            <h1>🚀 {settings.APP_TITLE}</h1>
-            <p>{settings.APP_DESCRIPTION}</p>
+    
+    # Initialize session state
+    initialize_session_state()
+    
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>🇬🇭 UbuntuAI</h1>
+        <p>Your AI Assistant for the Ghanaian Startup Ecosystem</p>
+        <div style="margin-top: 1rem;">
+            <span class="sector-badge sector-fintech">Fintech</span>
+            <span class="sector-badge sector-agritech">Agritech</span>
+            <span class="sector-badge sector-healthtech">Healthtech</span>
         </div>
-        ''', unsafe_allow_html=True)
-        
-        # Sidebar
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar
+    with st.sidebar:
         display_system_status()
+        st.markdown("---")
         display_user_profile()
         
-        # Main content area
-        st.markdown('''
-        <div class="chat-container">
-            <h3>💬 Ask UbuntuAI</h3>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        # Handle follow-up questions
-        if 'followup_query' in st.session_state:
-            query = st.session_state['followup_query']
-            del st.session_state['followup_query']
-        else:
-            # Text input
-            query = st.text_area(
-                "",
-                placeholder=settings.CHAT_PLACEHOLDER,
-                height=120,
-                help="Ask anything about African business, funding, regulations, or market insights",
-                label_visibility="collapsed"
+        # Provider selection
+        st.markdown("## 🔄 Switch Provider")
+        available_providers = settings.get_available_llm_providers()
+        if available_providers:
+            new_provider = st.selectbox(
+                "Select LLM Provider",
+                options=available_providers,
+                index=available_providers.index(st.session_state.current_provider)
+                if st.session_state.current_provider in available_providers else 0
             )
+            
+            if new_provider != st.session_state.current_provider:
+                st.session_state.current_provider = new_provider
+                st.success(f"Switched to {new_provider.title()}")
+    
+    # Main chat interface
+    st.markdown("## 💬 Ask About Ghanaian Startups")
+    
+    # Chat input
+    user_input = st.text_area(
+        "Ask me anything about fintech, agritech, or healthtech in Ghana...",
+        height=100,
+        placeholder="e.g., What are the key regulations for fintech startups in Ghana?",
+        key="user_input"
+    )
+    
+    # Process button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        process_button = st.button("🚀 Ask UbuntuAI", use_container_width=True)
+    
+    # Process query
+    if process_button and user_input:
+        # Validate input
+        is_valid, validation_message = validate_user_input(user_input)
         
-        # Process query
-        if query:
-            # Validate input
-            is_valid, error_msg = validate_user_input(query)
-            if not is_valid:
-                st.error(error_msg)
-                return
+        if not is_valid:
+            st.warning(validation_message)
+            return
+        
+        # Add user message to chat history
+        st.session_state.chat_history.append({
+            "role": "user",
+            "content": user_input,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Show processing message
+        with st.spinner("🤔 Thinking about your Ghanaian startup question..."):
+            # Process query
+            response = process_user_query(user_input)
             
-            # Add to chat history
-            st.session_state.chat_history.append({
-                'role': 'user',
-                'content': query,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Process and display response
-            response = process_user_query(query)
             if response:
+                # Add assistant response to chat history
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": response.get("answer", ""),
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+                # Display response
                 display_response(response)
                 
-                # Add assistant response to history
-                st.session_state.chat_history.append({
-                    'role': 'assistant',
-                    'content': response['answer'],
-                    'timestamp': datetime.now().isoformat()
-                })
+                # Clear input
+                st.session_state.user_input = ""
+            else:
+                st.error("Sorry, I couldn't process your question. Please try again.")
+    
+    # Display chat history
+    if st.session_state.chat_history:
+        st.markdown("## 📝 Chat History")
         
-        # Quick Actions
-        st.markdown("---")
-        st.markdown("### 🚀 Quick Actions")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🏢 Business Assessment", help="Get a comprehensive business readiness assessment"):
-                st.session_state['followup_query'] = "Please assess my business readiness and provide recommendations"
-                st.rerun()
-        
-        with col2:
-            if st.button("💰 Find Funding", help="Discover funding opportunities for your business"):
-                sector = st.session_state.user_profile.get('sector', 'tech')
-                country = st.session_state.user_profile.get('country', 'Africa')
-                st.session_state['followup_query'] = f"What funding opportunities are available for {sector} startups in {country}?"
-                st.rerun()
-        
-        with col3:
-            if st.button("📋 Regulatory Help", help="Get guidance on business registration and compliance"):
-                country = st.session_state.user_profile.get('country', 'Ghana')
-                st.session_state['followup_query'] = f"What are the business registration requirements in {country}?"
-                st.rerun()
-        
-        # Chat history (collapsible)
-        if st.session_state.chat_history:
-            with st.expander("💬 Conversation History", expanded=False):
-                for i, msg in enumerate(reversed(st.session_state.chat_history[-10:])):  # Show last 10
-                    role_icon = "👤" if msg['role'] == 'user' else "🤖"
-                    st.markdown(f"**{role_icon} {msg['role'].title()}:**")
-                    st.write(msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content'])
-                    st.markdown("---")
-        
-    except Exception as e:
-        logger.error(f"Application error: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        st.error("An unexpected error occurred. Please refresh the page and try again.")
-        st.code(str(e))
+        for i, message in enumerate(st.session_state.chat_history):
+            if message["role"] == "user":
+                st.markdown(f"""
+                <div class="chat-message user-message">
+                    <strong>👤 You:</strong> {message["content"]}
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="chat-message assistant-message">
+                    <strong>🤖 UbuntuAI:</strong> {message["content"]}
+                </div>
+                """, unsafe_allow_html=True)
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666;">
+        <p>🇬🇭 <strong>UbuntuAI</strong> - Empowering Ghanaian Entrepreneurs</p>
+        <p>Focusing on Fintech, Agritech, and Healthtech</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
