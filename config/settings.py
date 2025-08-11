@@ -165,9 +165,8 @@ class Settings:
         self.WHATSAPP_MAX_SESSIONS = int(os.getenv("WHATSAPP_MAX_SESSIONS", "1000"))
     
     def get_gemini_config(self) -> Dict[str, Any]:
-        """Get Gemini model configuration"""
+        """Get Gemini model configuration without model field"""
         return {
-            "model": self.LLM_MODEL,
             "temperature": self.TEMPERATURE,
             "top_p": self.TOP_P,
             "top_k": self.TOP_K,
@@ -177,7 +176,6 @@ class Settings:
     def get_mobile_gemini_config(self) -> Dict[str, Any]:
         """Get optimized Gemini config for mobile/WhatsApp users"""
         return {
-            "model": "gemini-1.5-flash",  # Faster model for mobile
             "temperature": 0.3,
             "top_p": 0.9,
             "top_k": 40,

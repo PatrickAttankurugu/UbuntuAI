@@ -152,16 +152,7 @@ class PromptTemplates:
 
     @staticmethod
     def get_conversation_starter_prompts() -> List[str]:
-        """Return list of conversation starter prompts for the UI"""
-        return [
-            "What are the best funding opportunities for fintech startups in Nigeria?",
-            "How do I register a business in Kenya and what are the requirements?",
-            "Tell me about successful agritech companies in East Africa",
-            "What are the current market trends in South African e-commerce?",
-            "Which accelerators and incubators are best for early-stage startups?",
-            "What are the tax incentives for startups in Rwanda?",
-            "How is the regulatory environment for digital payments in Ghana?",
-            "What should I know about intellectual property protection in Morocco?"
-        ]
+        """Return empty list - no conversation starters"""
+        return []
 
 prompt_templates = PromptTemplates()

@@ -17,10 +17,10 @@ class RAGEngine:
             
         genai.configure(api_key=settings.GOOGLE_API_KEY)
         
-        # Initialize Gemini model for text generation
+        # Initialize Gemini model for text generation with fixed configuration
         self.model = genai.GenerativeModel(
             model_name=settings.LLM_MODEL,
-            generation_config=settings.get_gemini_config()
+            generation_config=settings.get_gemini_config()  # This now excludes the model field
         )
         
         self.vector_store = vector_store
@@ -98,7 +98,12 @@ class RAGEngine:
             )
             
             try:
-                response = self.model.generate_content(context_prompt)
+                # Create a separate model instance for context enhancement
+                enhancement_model = genai.GenerativeModel(
+                    model_name="gemini-1.5-flash",  # Use faster model for enhancement
+                    generation_config={"temperature": 0.3, "max_output_tokens": 200}
+                )
+                response = enhancement_model.generate_content(context_prompt)
                 if response and response.text:
                     return response.text.strip()
             except Exception as e:
@@ -110,7 +115,12 @@ class RAGEngine:
         classification_prompt = prompt_templates.QUERY_CLASSIFICATION_PROMPT.format(query=query)
         
         try:
-            response = self.model.generate_content(classification_prompt)
+            # Create a separate model instance for classification
+            classification_model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                generation_config={"temperature": 0.1, "max_output_tokens": 300}
+            )
+            response = classification_model.generate_content(classification_prompt)
             if response and response.text:
                 # Try to parse JSON response
                 result = response.text.strip()
@@ -280,7 +290,12 @@ class RAGEngine:
                 answer=answer[:1000]  # Truncate for token limits
             )
             
-            response = self.model.generate_content(prompt)
+            # Create a separate model instance for follow-up generation
+            followup_model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                generation_config={"temperature": 0.5, "max_output_tokens": 300}
+            )
+            response = followup_model.generate_content(prompt)
             
             if not response or not response.text:
                 return self._get_default_follow_ups()

@@ -43,55 +43,249 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Modern CSS styling
 st.markdown("""
 <style>
-    .main-header {
+    /* Import modern fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    /* Global styles */
+    .stApp {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 10px;
-        color: white;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Main container */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 1200px;
+    }
+    
+    /* Header styling */
+    .main-header {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        padding: 3rem 2rem;
+        border-radius: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
         text-align: center;
+        margin-bottom: 2rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .main-header h1 {
+        color: #2D3748;
+        font-weight: 700;
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+        letter-spacing: -0.025em;
+    }
+    
+    .main-header p {
+        color: #4A5568;
+        font-size: 1.125rem;
+        font-weight: 400;
+        margin: 0;
+    }
+    
+    /* Chat interface */
+    .chat-container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
+        padding: 2rem;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
         margin-bottom: 2rem;
     }
     
-    .metric-card {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin: 0.5rem 0;
-    }
-    
     .chat-message {
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-radius: 8px;
+        background: linear-gradient(135deg, #f8f9ff 0%, #e8eeff 100%);
+        padding: 1.5rem;
+        border-radius: 16px;
         border-left: 4px solid #667eea;
-        background: #f8f9ff;
+        margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     }
     
-    .error-message {
-        background: #fee;
-        border-left: 4px solid #f66;
-        padding: 1rem;
-        border-radius: 4px;
-        margin: 1rem 0;
+    .response-header {
+        color: #2D3748;
+        font-weight: 600;
+        font-size: 1.25rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
     }
     
-    .success-message {
-        background: #efe;
-        border-left: 4px solid #6f6;
-        padding: 1rem;
-        border-radius: 4px;
-        margin: 1rem 0;
+    /* Sidebar styling */
+    .css-1d391kg {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
     }
     
     .sidebar-section {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
+        background: rgba(248, 250, 252, 0.8);
+        padding: 1.5rem;
+        border-radius: 16px;
         margin: 1rem 0;
+        border: 1px solid rgba(226, 232, 240, 0.8);
+    }
+    
+    /* Metrics and stats */
+    .metric-card {
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%);
+        padding: 1.5rem;
+        border-radius: 16px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+        border: 1px solid rgba(226, 232, 240, 0.8);
+        margin: 0.5rem 0;
+        text-align: center;
+    }
+    
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #667eea;
+        margin-bottom: 0.25rem;
+    }
+    
+    .metric-label {
+        font-size: 0.875rem;
+        color: #64748B;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    /* Status indicators */
+    .status-success {
+        background: linear-gradient(135deg, #10B981, #059669);
+        color: white;
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+        font-weight: 500;
+        margin: 0.5rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .status-error {
+        background: linear-gradient(135deg, #EF4444, #DC2626);
+        color: white;
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+        font-weight: 500;
+        margin: 0.5rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .status-warning {
+        background: linear-gradient(135deg, #F59E0B, #D97706);
+        color: white;
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+        font-weight: 500;
+        margin: 0.5rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    /* Action buttons */
+    .action-button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 1rem 2rem;
+        border-radius: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+        width: 100%;
+        margin: 0.5rem 0;
+    }
+    
+    .action-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 25px rgba(102, 126, 234, 0.4);
+    }
+    
+    /* Follow-up questions */
+    .follow-up-question {
+        background: rgba(102, 126, 234, 0.1);
+        border: 1px solid rgba(102, 126, 234, 0.2);
+        padding: 1rem;
+        border-radius: 12px;
+        margin: 0.5rem 0;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .follow-up-question:hover {
+        background: rgba(102, 126, 234, 0.15);
+        transform: translateX(4px);
+    }
+    
+    /* Sources section */
+    .sources-container {
+        background: rgba(248, 250, 252, 0.8);
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        border: 1px solid rgba(226, 232, 240, 0.8);
+    }
+    
+    .source-item {
+        background: white;
+        padding: 1rem;
+        border-radius: 12px;
+        margin: 0.75rem 0;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        border-left: 4px solid #667eea;
+    }
+    
+    /* Text input styling */
+    .stTextArea textarea {
+        border-radius: 16px;
+        border: 2px solid rgba(102, 126, 234, 0.2);
+        padding: 1rem;
+        font-family: 'Inter', sans-serif;
+        transition: all 0.3s ease;
+    }
+    
+    .stTextArea textarea:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    /* Hide default streamlit styling */
+    .css-1y4p8pa {
+        padding-top: 0;
+    }
+    
+    .css-1d391kg .css-1y4p8pa {
+        padding-top: 1rem;
+    }
+    
+    /* Responsive design */
+    @media (max-width: 768px) {
+        .main-header {
+            padding: 2rem 1rem;
+        }
+        
+        .main-header h1 {
+            font-size: 2rem;
+        }
+        
+        .chat-container {
+            padding: 1.5rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -150,8 +344,8 @@ def initialize_session_state():
         st.session_state.user_profile = {
             'name': '',
             'country': 'Ghana',
-            'sector': 'Fintech',
-            'business_stage': 'Pre-seed',  # Changed from 'Idea' to 'Pre-seed'
+            'sector': 'Agritech',
+            'business_stage': 'Pre-seed',
             'team_size': 1,
             'experience_level': 'First-time entrepreneur'
         }
@@ -167,28 +361,45 @@ def display_system_status():
         # Settings validation
         try:
             is_configured = settings.validate_config()
-            st.success("✅ Configuration Valid") if is_configured else st.error("❌ Configuration Issues")
+            if is_configured:
+                st.markdown('<div class="status-success">✅ Configuration Valid</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="status-error">❌ Configuration Issues</div>', unsafe_allow_html=True)
         except Exception as e:
-            st.error(f"❌ Config Error: {str(e)[:50]}...")
+            st.markdown(f'<div class="status-error">❌ Config Error: {str(e)[:50]}...</div>', unsafe_allow_html=True)
         
         # API status
         if settings.GOOGLE_API_KEY:
-            st.success("✅ Gemini API Configured")
+            st.markdown('<div class="status-success">✅ Gemini API Configured</div>', unsafe_allow_html=True)
         else:
-            st.error("❌ Gemini API Key Missing")
+            st.markdown('<div class="status-error">❌ Gemini API Key Missing</div>', unsafe_allow_html=True)
         
         # WhatsApp status
         whatsapp_config = settings.get_whatsapp_config()
         if whatsapp_config:
-            st.success("✅ WhatsApp Integration Ready")
+            st.markdown('<div class="status-success">✅ WhatsApp Integration Ready</div>', unsafe_allow_html=True)
         else:
-            st.warning("⚠️ WhatsApp Not Configured")
+            st.markdown('<div class="status-warning">⚠️ WhatsApp Not Configured</div>', unsafe_allow_html=True)
         
         # System info
         st.markdown("### 📊 System Info")
         config_info = settings.to_dict()
-        st.write(f"**Countries**: {config_info['supported_countries']}")
-        st.write(f"**Sectors**: {config_info['supported_sectors']}")
+        
+        # Metrics cards
+        st.markdown(f'''
+        <div class="metric-card">
+            <div class="metric-value">{config_info["supported_countries"]}</div>
+            <div class="metric-label">Countries</div>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        st.markdown(f'''
+        <div class="metric-card">
+            <div class="metric-value">{config_info["supported_sectors"]}</div>
+            <div class="metric-label">Sectors</div>
+        </div>
+        ''', unsafe_allow_html=True)
+        
         st.write(f"**Model**: {config_info['embedding_model']}")
 
 def display_user_profile():
@@ -213,7 +424,7 @@ def display_user_profile():
             st.session_state.user_profile['sector'] = st.selectbox(
                 "Business Sector",
                 options=settings.BUSINESS_SECTORS,
-                index=settings.BUSINESS_SECTORS.index(st.session_state.user_profile.get('sector', 'Fintech')),
+                index=settings.BUSINESS_SECTORS.index(st.session_state.user_profile.get('sector', 'Agritech')),
                 help="Your industry focus"
             )
             
@@ -263,7 +474,7 @@ def process_user_query(query: str) -> Optional[Dict[str, Any]]:
             user_context['recent_conversation'] = recent_history
         
         # Process through RAG engine
-        with st.spinner("🤖 Thinking..."):
+        with st.spinner("🤖 Analyzing your question..."):
             response = rag_engine.query(
                 question=query,
                 conversation_history=st.session_state.chat_history,
@@ -289,8 +500,12 @@ def display_response(response: Dict[str, Any]):
         return
     
     # Main answer
-    st.markdown("### 🤖 UbuntuAI Response")
-    st.markdown(f'<div class="chat-message">{response["answer"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'''
+    <div class="chat-container">
+        <div class="response-header">🤖 UbuntuAI Response</div>
+        <div class="chat-message">{response["answer"]}</div>
+    </div>
+    ''', unsafe_allow_html=True)
     
     # Confidence and sources
     col1, col2 = st.columns(2)
@@ -298,27 +513,42 @@ def display_response(response: Dict[str, Any]):
     with col1:
         confidence = response.get('confidence', 0)
         if confidence > 0:
-            st.metric("Confidence", f"{confidence:.1%}")
+            st.markdown(f'''
+            <div class="metric-card">
+                <div class="metric-value">{confidence:.1%}</div>
+                <div class="metric-label">Confidence</div>
+            </div>
+            ''', unsafe_allow_html=True)
     
     with col2:
         sources_count = len(response.get('sources', []))
         if sources_count > 0:
-            st.metric("Sources Used", sources_count)
+            st.markdown(f'''
+            <div class="metric-card">
+                <div class="metric-value">{sources_count}</div>
+                <div class="metric-label">Sources Used</div>
+            </div>
+            ''', unsafe_allow_html=True)
     
     # Follow-up questions
     if response.get('follow_up_questions'):
         st.markdown("### 💡 Follow-up Questions")
         for i, question in enumerate(response['follow_up_questions'], 1):
-            if st.button(f"{i}. {question}", key=f"followup_{i}"):
+            if st.button(f"{i}. {question}", key=f"followup_{i}", help="Click to explore this topic"):
                 st.session_state['followup_query'] = question
                 st.rerun()
     
     # Sources (collapsible)
     if response.get('sources'):
-        with st.expander("📚 Sources & References"):
+        with st.expander("📚 Sources & References", expanded=False):
             for i, source in enumerate(response['sources'], 1):
-                st.markdown(f"**Source {i}:**")
-                st.write(source.get('content_preview', ''))
+                st.markdown(f'''
+                <div class="source-item">
+                    <strong>Source {i}:</strong><br>
+                    {source.get('content_preview', '')}
+                </div>
+                ''', unsafe_allow_html=True)
+                
                 if source.get('metadata'):
                     st.json(source['metadata'])
 
@@ -329,42 +559,37 @@ def main():
         initialize_session_state()
         
         # Header
-        st.markdown(f'<div class="main-header"><h1>🚀 {settings.APP_TITLE}</h1><p>{settings.APP_DESCRIPTION}</p></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+        <div class="main-header">
+            <h1>🚀 {settings.APP_TITLE}</h1>
+            <p>{settings.APP_DESCRIPTION}</p>
+        </div>
+        ''', unsafe_allow_html=True)
         
         # Sidebar
         display_system_status()
         display_user_profile()
         
         # Main content area
-        st.markdown("### 💬 Ask UbuntuAI")
+        st.markdown('''
+        <div class="chat-container">
+            <h3>💬 Ask UbuntuAI</h3>
+        </div>
+        ''', unsafe_allow_html=True)
         
         # Handle follow-up questions
         if 'followup_query' in st.session_state:
             query = st.session_state['followup_query']
             del st.session_state['followup_query']
         else:
-            # Example questions
-            st.markdown("**Try these example questions:**")
-            examples = prompt_templates.get_conversation_starter_prompts()
-            
-            # Display examples as clickable buttons
-            cols = st.columns(2)
-            for i, example in enumerate(examples[:6]):  # Show first 6 examples
-                with cols[i % 2]:
-                    if st.button(example, key=f"example_{i}", help="Click to use this question"):
-                        query = example
-                        break
-            else:
-                query = None
-            
             # Text input
-            if not query:
-                query = st.text_area(
-                    "Your Question:",
-                    placeholder=settings.CHAT_PLACEHOLDER,
-                    height=100,
-                    help="Ask anything about African business, funding, regulations, or market insights"
-                )
+            query = st.text_area(
+                "",
+                placeholder=settings.CHAT_PLACEHOLDER,
+                height=120,
+                help="Ask anything about African business, funding, regulations, or market insights",
+                label_visibility="collapsed"
+            )
         
         # Process query
         if query:
@@ -393,37 +618,37 @@ def main():
                     'timestamp': datetime.now().isoformat()
                 })
         
-        # Chat history
-        if st.session_state.chat_history:
-            with st.expander("💬 Conversation History"):
-                for i, msg in enumerate(reversed(st.session_state.chat_history[-10:])):  # Show last 10
-                    role_icon = "👤" if msg['role'] == 'user' else "🤖"
-                    st.markdown(f"**{role_icon} {msg['role'].title()}:**")
-                    st.write(msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content'])
-                    st.markdown("---")
-        
-        # Footer
+        # Quick Actions
         st.markdown("---")
-        st.markdown("### 🔗 Quick Links")
+        st.markdown("### 🚀 Quick Actions")
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("🏢 Business Assessment"):
+            if st.button("🏢 Business Assessment", help="Get a comprehensive business readiness assessment"):
                 st.session_state['followup_query'] = "Please assess my business readiness and provide recommendations"
                 st.rerun()
         
         with col2:
-            if st.button("💰 Find Funding"):
+            if st.button("💰 Find Funding", help="Discover funding opportunities for your business"):
                 sector = st.session_state.user_profile.get('sector', 'tech')
                 country = st.session_state.user_profile.get('country', 'Africa')
                 st.session_state['followup_query'] = f"What funding opportunities are available for {sector} startups in {country}?"
                 st.rerun()
         
         with col3:
-            if st.button("📋 Regulatory Help"):
+            if st.button("📋 Regulatory Help", help="Get guidance on business registration and compliance"):
                 country = st.session_state.user_profile.get('country', 'Ghana')
                 st.session_state['followup_query'] = f"What are the business registration requirements in {country}?"
                 st.rerun()
+        
+        # Chat history (collapsible)
+        if st.session_state.chat_history:
+            with st.expander("💬 Conversation History", expanded=False):
+                for i, msg in enumerate(reversed(st.session_state.chat_history[-10:])):  # Show last 10
+                    role_icon = "👤" if msg['role'] == 'user' else "🤖"
+                    st.markdown(f"**{role_icon} {msg['role'].title()}:**")
+                    st.write(msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content'])
+                    st.markdown("---")
         
     except Exception as e:
         logger.error(f"Application error: {str(e)}")
