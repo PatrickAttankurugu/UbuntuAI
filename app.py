@@ -28,12 +28,44 @@ except ImportError as e:
     st.error(f"Configuration error: {e}")
     st.stop()
 
+# Import with fallbacks for advanced features
 try:
     from api.rag_engine import rag_engine
-    from api.langchain_agents import create_ghana_business_agent
+    RAG_ENGINE_AVAILABLE = True
 except ImportError as e:
-    st.error(f"API module error: {e}")
-    st.stop()
+    logger.warning(f"Basic RAG engine not available: {e}")
+    RAG_ENGINE_AVAILABLE = False
+    rag_engine = None
+
+try:
+    from api.advanced_rag_engine import get_advanced_rag_engine, advanced_rag_engine
+    ADVANCED_RAG_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Advanced RAG engine not available: {e}")
+    ADVANCED_RAG_AVAILABLE = False
+    advanced_rag_engine = None
+
+try:
+    from api.langchain_agents import create_ghana_business_agent
+    AGENTS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"LangChain agents not available: {e}")
+    AGENTS_AVAILABLE = False
+
+# Import performance and security features
+try:
+    from api.performance_optimizer import cache_manager, query_optimizer
+    PERFORMANCE_OPTIMIZATION_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Performance optimization not available: {e}")
+    PERFORMANCE_OPTIMIZATION_AVAILABLE = False
+
+try:
+    from api.security_manager import security_manager
+    SECURITY_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Security manager not available: {e}")
+    SECURITY_AVAILABLE = False
 
 # Page configuration
 st.set_page_config(
@@ -165,6 +197,28 @@ st.markdown("""
         background: rgba(0, 107, 63, 0.1);
         border-left-color: #006B3F;
     }
+    
+    /* Feature status indicators */
+    .feature-status {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        margin: 0.125rem;
+    }
+    
+    .feature-available {
+        background: rgba(34, 197, 94, 0.2);
+        color: #166534;
+        border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    
+    .feature-unavailable {
+        background: rgba(239, 68, 68, 0.2);
+        color: #991b1b;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
 </style>
 """)
 
@@ -208,7 +262,7 @@ def initialize_session_state():
         st.session_state.chat_history = []
     
     if "current_provider" not in st.session_state:
-        st.session_state.current_provider = settings.PRIMARY_LLM_PROVIDER
+        st.session_state.current_provider = getattr(settings, 'PRIMARY_LLM_PROVIDER', 'unknown')
     
     if "user_profile" not in st.session_state:
         st.session_state.user_profile = {
@@ -216,6 +270,9 @@ def initialize_session_state():
             "region": "Greater Accra",
             "experience_level": "beginner"
         }
+    
+    if "use_advanced_features" not in st.session_state:
+        st.session_state.use_advanced_features = ADVANCED_RAG_AVAILABLE
 
 def display_system_status():
     """Display system status and configuration"""
@@ -223,54 +280,89 @@ def display_system_status():
     st.sidebar.markdown("## 🇬🇭 System Status")
     
     # Provider status
-    available_providers = settings.get_available_llm_providers()
+    available_providers = getattr(settings, 'get_available_llm_providers', lambda: [])()
     current_provider = st.session_state.current_provider
     
     st.sidebar.markdown("### 🤖 LLM Providers")
-    for provider in available_providers:
-        status = "🟢" if provider == current_provider else "⚪"
-        st.sidebar.markdown(f"{status} {provider.title()}")
+    if available_providers:
+        for provider in available_providers:
+            status = "🟢" if provider == current_provider else "⚪"
+            st.sidebar.markdown(f"{status} {provider.title()}")
+    else:
+        st.sidebar.markdown("⚠️ No LLM providers configured")
     
-    # Vector store status
+    # RAG Engine status
     st.sidebar.markdown("### 📚 Knowledge Base")
     try:
-        if rag_engine and rag_engine.vector_store:
-            st.sidebar.markdown("🟢 Vector store connected")
+        if rag_engine and hasattr(rag_engine, 'vector_store'):
+            st.sidebar.markdown("🟢 Basic RAG engine connected")
         else:
-            st.sidebar.markdown("🔴 Vector store not connected")
+            st.sidebar.markdown("🔴 Basic RAG engine not connected")
     except:
-        st.sidebar.markdown("🔴 Vector store status unknown")
+        st.sidebar.markdown("🔴 Basic RAG engine status unknown")
+    
+    # Advanced features status
+    st.sidebar.markdown("### 🚀 Advanced Features")
+    
+    # Advanced RAG
+    if ADVANCED_RAG_AVAILABLE and advanced_rag_engine:
+        st.sidebar.markdown("🟢 Advanced RAG (CRAG/DRAG)")
+    else:
+        st.sidebar.markdown("🔴 Advanced RAG (CRAG/DRAG)")
+    
+    # Performance optimization
+    if PERFORMANCE_OPTIMIZATION_AVAILABLE:
+        st.sidebar.markdown("🟢 Performance optimization")
+    else:
+        st.sidebar.markdown("🔴 Performance optimization")
+    
+    # Security
+    if SECURITY_AVAILABLE:
+        st.sidebar.markdown("🟢 Security & rate limiting")
+    else:
+        st.sidebar.markdown("🔴 Security & rate limiting")
     
     # Ghanaian focus indicators
     st.sidebar.markdown("### 🇬🇭 Ghanaian Focus")
-    st.sidebar.markdown(f"🎯 **Sectors:** {', '.join(settings.GHANA_STARTUP_SECTORS)}")
-    st.sidebar.markdown(f"📍 **Regions:** {len(settings.GHANA_REGIONS)} regions")
+    ghana_sectors = getattr(settings, 'GHANA_STARTUP_SECTORS', ['Fintech', 'Agritech', 'Healthtech'])
+    ghana_regions = getattr(settings, 'GHANA_REGIONS', [])
+    
+    st.sidebar.markdown(f"🎯 **Sectors:** {', '.join(ghana_sectors)}")
+    st.sidebar.markdown(f"📍 **Regions:** {len(ghana_regions)} regions")
     
     # Performance metrics
     st.sidebar.markdown("### 📊 Performance")
-    st.sidebar.markdown(f"⚡ **Strategy:** {settings.RETRIEVAL_STRATEGY}")
-    st.sidebar.markdown(f"🔍 **Chunking:** {settings.CHUNKING_STRATEGY}")
-    st.sidebar.markdown(f"📈 **Reranking:** {'Enabled' if settings.USE_RERANKING else 'Disabled'}")
+    retrieval_strategy = getattr(settings, 'RETRIEVAL_STRATEGY', 'basic')
+    chunking_strategy = getattr(settings, 'CHUNKING_STRATEGY', 'basic')
+    use_reranking = getattr(settings, 'USE_RERANKING', False)
+    
+    st.sidebar.markdown(f"⚡ **Strategy:** {retrieval_strategy}")
+    st.sidebar.markdown(f"🔍 **Chunking:** {chunking_strategy}")
+    st.sidebar.markdown(f"📈 **Reranking:** {'Enabled' if use_reranking else 'Disabled'}")
 
 def display_user_profile():
     """Display and allow editing of user profile"""
     
     st.sidebar.markdown("## 👤 Your Profile")
     
+    # Get available options from settings
+    ghana_sectors = getattr(settings, 'GHANA_STARTUP_SECTORS', ['Fintech', 'Agritech', 'Healthtech'])
+    ghana_regions = getattr(settings, 'GHANA_REGIONS', ['Greater Accra', 'Ashanti', 'Western'])
+    
     # Sector selection
     sector = st.sidebar.selectbox(
         "🎯 Primary Sector",
-        options=settings.GHANA_STARTUP_SECTORS,
-        index=settings.GHANA_STARTUP_SECTORS.index(st.session_state.user_profile["sector"])
-        if st.session_state.user_profile["sector"] in settings.GHANA_STARTUP_SECTORS else 0
+        options=ghana_sectors,
+        index=ghana_sectors.index(st.session_state.user_profile["sector"])
+        if st.session_state.user_profile["sector"] in ghana_sectors else 0
     )
     
     # Region selection
     region = st.sidebar.selectbox(
         "📍 Primary Region",
-        options=settings.GHANA_REGIONS,
-        index=settings.GHANA_REGIONS.index(st.session_state.user_profile["region"])
-        if st.session_state.user_profile["region"] in settings.GHANA_REGIONS else 0
+        options=ghana_regions,
+        index=ghana_regions.index(st.session_state.user_profile["region"])
+        if st.session_state.user_profile["region"] in ghana_regions else 0
     )
     
     # Experience level
@@ -280,6 +372,15 @@ def display_user_profile():
         options=experience_levels,
         index=experience_levels.index(st.session_state.user_profile["experience_level"])
     )
+    
+    # Advanced features toggle
+    if ADVANCED_RAG_AVAILABLE:
+        use_advanced = st.sidebar.checkbox(
+            "🚀 Use Advanced Features (CRAG/DRAG)",
+            value=st.session_state.use_advanced_features,
+            help="Enable advanced RAG patterns for better responses"
+        )
+        st.session_state.use_advanced_features = use_advanced
     
     # Update profile
     if st.sidebar.button("💾 Update Profile"):
@@ -295,9 +396,23 @@ def display_user_profile():
     st.sidebar.markdown(f"**Sector:** {sector}")
     st.sidebar.markdown(f"**Region:** {region}")
     st.sidebar.markdown(f"**Experience:** {experience.title()}")
+    
+    # Feature status
+    st.sidebar.markdown("### 🔧 Feature Status")
+    features = [
+        ("Basic RAG", RAG_ENGINE_AVAILABLE),
+        ("Advanced RAG", ADVANCED_RAG_AVAILABLE),
+        ("Performance Optimization", PERFORMANCE_OPTIMIZATION_AVAILABLE),
+        ("Security", SECURITY_AVAILABLE)
+    ]
+    
+    for feature_name, is_available in features:
+        status_class = "feature-available" if is_available else "feature-unavailable"
+        status_text = "Available" if is_available else "Unavailable"
+        st.sidebar.markdown(f'<span class="feature-status {status_class}">{feature_name}: {status_text}</span>', unsafe_allow_html=True)
 
 def process_user_query(query: str) -> Optional[Dict[str, Any]]:
-    """Process user query using the RAG engine"""
+    """Process user query using the appropriate RAG engine"""
     
     try:
         # Get user context
@@ -308,17 +423,87 @@ def process_user_query(query: str) -> Optional[Dict[str, Any]]:
             "current_provider": st.session_state.current_provider
         }
         
-        # Process query
-        if rag_engine:
-            response = rag_engine.query(
-                question=query,
-                conversation_history=st.session_state.chat_history,
-                user_context=user_context,
-                provider=st.session_state.current_provider
-            )
-            return response
+        # Security validation if available
+        if SECURITY_AVAILABLE:
+            try:
+                is_valid, message, security_metadata = security_manager.validate_request(
+                    content=query,
+                    content_type="query",
+                    user_context=user_context,
+                    user_id="anonymous",
+                    ip_address="127.0.0.1"
+                )
+                
+                if not is_valid:
+                    st.error(f"Security validation failed: {message}")
+                    return None
+                    
+            except Exception as e:
+                logger.warning(f"Security validation failed: {e}")
+        
+        # Query optimization if available
+        if PERFORMANCE_OPTIMIZATION_AVAILABLE:
+            try:
+                optimized_query = query_optimizer.optimize_query(query, user_context)
+                logger.info(f"Query optimized: {query[:50]}... -> {optimized_query[:50]}...")
+                query = optimized_query
+            except Exception as e:
+                logger.warning(f"Query optimization failed: {e}")
+        
+        # Process query with appropriate engine
+        if (st.session_state.use_advanced_features and 
+            ADVANCED_RAG_AVAILABLE and 
+            advanced_rag_engine):
+            
+            # Use advanced RAG engine
+            try:
+                import asyncio
+                response = asyncio.run(advanced_rag_engine.query_advanced(
+                    question=query,
+                    conversation_history=st.session_state.chat_history,
+                    user_context=user_context,
+                    provider=st.session_state.current_provider,
+                    use_advanced_patterns=True
+                ))
+                
+                # Convert RAGResponse to dict format
+                if hasattr(response, '__dict__'):
+                    response_dict = response.__dict__
+                else:
+                    response_dict = {
+                        "answer": getattr(response, 'answer', 'No answer generated'),
+                        "sources": getattr(response, 'sources', []),
+                        "follow_up_questions": getattr(response, 'follow_up_questions', []),
+                        "confidence": getattr(response, 'confidence', 0.5),
+                        "processing_time": getattr(response, 'processing_time', 0.0),
+                        "chunks_retrieved": getattr(response, 'chunks_retrieved', 0),
+                        "provider": getattr(response, 'provider', 'unknown'),
+                        "ghana_focus": True,
+                        "sectors_covered": getattr(response, 'sectors_covered', ['general'])
+                    }
+                
+                return response_dict
+                
+            except Exception as e:
+                logger.error(f"Advanced RAG query failed: {e}")
+                st.warning("Advanced RAG failed, falling back to basic RAG")
+        
+        # Fallback to basic RAG engine
+        if RAG_ENGINE_AVAILABLE and rag_engine:
+            try:
+                response = rag_engine.query(
+                    question=query,
+                    conversation_history=st.session_state.chat_history,
+                    user_context=user_context,
+                    provider=st.session_state.current_provider
+                )
+                return response
+            except Exception as e:
+                logger.error(f"Basic RAG query failed: {e}")
+                st.error("RAG engine not available")
+                return None
         else:
-            st.error("RAG engine not available")
+            st.error("No RAG engine available")
             return None
             
     except Exception as e:
@@ -351,7 +536,11 @@ def display_response(response: Dict[str, Any]):
         for i, source in enumerate(sources[:5]):  # Limit to top 5 sources
             with st.expander(f"Source {i+1}: {source.get('title', 'Unknown')}"):
                 st.markdown(f"**Content:** {source.get('content', 'No content')[:200]}...")
-                st.markdown(f"**Relevance:** {source.get('relevance', 'Unknown')}")
+                relevance = source.get('relevance', 'Unknown')
+                if isinstance(relevance, float):
+                    st.markdown(f"**Relevance:** {relevance:.1%}")
+                else:
+                    st.markdown(f"**Relevance:** {relevance}")
     
     # Display follow-up questions
     follow_ups = response.get("follow_up_questions", [])
@@ -367,6 +556,14 @@ def display_response(response: Dict[str, Any]):
         st.markdown(f"**Provider:** {response.get('provider', 'Unknown')}")
         st.markdown(f"**Processing Time:** {response.get('processing_time', 'Unknown')}")
         st.markdown(f"**Chunks Retrieved:** {response.get('chunks_retrieved', 'Unknown')}")
+        
+        # Advanced features info
+        if response.get('ghana_focus'):
+            st.markdown("🇬🇭 **Ghanaian Focus:** Enabled")
+        
+        sectors_covered = response.get('sectors_covered', [])
+        if sectors_covered:
+            st.markdown(f"🎯 **Sectors Covered:** {', '.join(sectors_covered)}")
 
 def main():
     """Main application function"""
@@ -395,7 +592,7 @@ def main():
         
         # Provider selection
         st.markdown("## 🔄 Switch Provider")
-        available_providers = settings.get_available_llm_providers()
+        available_providers = getattr(settings, 'get_available_llm_providers', lambda: [])()
         if available_providers:
             new_provider = st.selectbox(
                 "Select LLM Provider",
@@ -441,7 +638,11 @@ def main():
         })
         
         # Show processing message
-        with st.spinner("🤔 Thinking about your Ghanaian startup question..."):
+        processing_text = "🤔 Thinking about your Ghanaian startup question..."
+        if st.session_state.use_advanced_features and ADVANCED_RAG_AVAILABLE:
+            processing_text += " (using advanced RAG patterns)"
+        
+        with st.spinner(processing_text):
             # Process query
             response = process_user_query(user_input)
             
@@ -485,8 +686,15 @@ def main():
     <div style="text-align: center; color: #666;">
         <p>🇬🇭 <strong>UbuntuAI</strong> - Empowering Ghanaian Entrepreneurs</p>
         <p>Focusing on Fintech, Agritech, and Healthtech</p>
+        <p style="font-size: 0.8em; margin-top: 1rem;">
+            Advanced Features: {} | Performance: {} | Security: {}
+        </p>
     </div>
-    """, unsafe_allow_html=True)
+    """.format(
+        "✅" if ADVANCED_RAG_AVAILABLE else "❌",
+        "✅" if PERFORMANCE_OPTIMIZATION_AVAILABLE else "❌",
+        "✅" if SECURITY_AVAILABLE else "❌"
+    ), unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
