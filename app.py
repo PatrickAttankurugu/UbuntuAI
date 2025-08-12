@@ -1,700 +1,519 @@
+#!/usr/bin/env python3
+"""
+UbuntuAI - African Business Intelligence Platform
+Streamlit application for Ghanaian startup ecosystem insights
+"""
+
 import streamlit as st
-import sys
 import os
+import sys
 import logging
 from datetime import datetime
-import traceback
-from typing import Dict, Any, Optional
+from pathlib import Path
+
+# Add project root to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('ubuntuai.log'),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Add the current directory to the Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-# Import core components with error handling
-try:
-    from config.settings import settings, SettingsValidationError
-    from config.prompts import prompt_templates
-except ImportError as e:
-    st.error(f"Configuration error: {e}")
-    st.stop()
-
-# Import with fallbacks for advanced features
-try:
-    from api.rag_engine import rag_engine
-    RAG_ENGINE_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Basic RAG engine not available: {e}")
-    RAG_ENGINE_AVAILABLE = False
-    rag_engine = None
-
-try:
-    from api.advanced_rag_engine import get_advanced_rag_engine, advanced_rag_engine
-    ADVANCED_RAG_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Advanced RAG engine not available: {e}")
-    ADVANCED_RAG_AVAILABLE = False
-    advanced_rag_engine = None
-
-try:
-    from api.langchain_agents import create_ghana_business_agent
-    AGENTS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"LangChain agents not available: {e}")
-    AGENTS_AVAILABLE = False
-
-# Import performance and security features
-try:
-    from api.performance_optimizer import cache_manager, query_optimizer
-    PERFORMANCE_OPTIMIZATION_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Performance optimization not available: {e}")
-    PERFORMANCE_OPTIMIZATION_AVAILABLE = False
-
-try:
-    from api.security_manager import security_manager
-    SECURITY_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Security manager not available: {e}")
-    SECURITY_AVAILABLE = False
-
 # Page configuration
 st.set_page_config(
-    page_title=settings.APP_TITLE,
+    page_title="UbuntuAI - African Business Intelligence",
     page_icon="🇬🇭",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Modern CSS styling with Ghanaian theme
+# Custom CSS
 st.markdown("""
 <style>
-    /* Import modern fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
-    /* Global styles */
-    .stApp {
-        background: linear-gradient(135deg, #CE1126 0%, #FCD116 50%, #006B3F 100%);
-        font-family: 'Inter', sans-serif;
-    }
-    
-    /* Main container */
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-        max-width: 1200px;
-    }
-    
-    /* Header styling with Ghanaian colors */
     .main-header {
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(20px);
-        padding: 3rem 2rem;
-        border-radius: 20px;
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        background: linear-gradient(90deg, #1f77b4, #ff7f0e);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
         text-align: center;
         margin-bottom: 2rem;
-        border: 3px solid #CE1126;
     }
-    
-    .main-header h1 {
-        color: #CE1126;
-        font-weight: 700;
-        font-size: 2.5rem;
-        margin-bottom: 0.5rem;
-        letter-spacing: -0.025em;
+    .ghana-flag {
+        font-size: 3rem;
+        margin-bottom: 1rem;
     }
-    
-    .main-header p {
-        color: #006B3F;
-        font-size: 1.125rem;
-        font-weight: 500;
-        margin: 0;
-    }
-    
-    /* Chat interface */
-    .chat-container {
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(20px);
-        border-radius: 20px;
-        padding: 2rem;
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-        border: 2px solid #FCD116;
-        margin-bottom: 2rem;
-    }
-    
-    /* Sector badges */
-    .sector-badge {
-        display: inline-block;
-        padding: 0.5rem 1rem;
-        margin: 0.25rem;
-        border-radius: 25px;
-        font-size: 0.875rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    
-    .sector-fintech {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-    }
-    
-    .sector-agritech {
-        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-        color: white;
-    }
-    
-    .sector-healthtech {
-        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
-        color: white;
-    }
-    
-    /* Ghana flag colors */
-    .ghana-red { color: #CE1126; }
-    .ghana-yellow { color: #FCD116; }
-    .ghana-green { color: #006B3F; }
-    
-    /* Button styling */
-    .stButton > button {
-        background: linear-gradient(135deg, #CE1126 0%, #FCD116 100%);
-        color: white;
-        border: none;
-        border-radius: 10px;
-        padding: 0.75rem 1.5rem;
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 20px rgba(206, 17, 38, 0.3);
-    }
-    
-    /* Chat message styling */
-    .chat-message {
+    .sector-card {
+        background: #f0f2f6;
         padding: 1rem;
-        margin: 1rem 0;
-        border-radius: 15px;
-        border-left: 4px solid #FCD116;
+        border-radius: 8px;
+        border-left: 4px solid #1f77b4;
+        margin: 0.5rem 0;
     }
-    
-    .user-message {
-        background: rgba(206, 17, 38, 0.1);
-        border-left-color: #CE1126;
-    }
-    
-    .assistant-message {
-        background: rgba(0, 107, 63, 0.1);
-        border-left-color: #006B3F;
-    }
-    
-    /* Feature status indicators */
-    .feature-status {
-        display: inline-block;
-        padding: 0.25rem 0.5rem;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        margin: 0.125rem;
-    }
-    
-    .feature-available {
-        background: rgba(34, 197, 94, 0.2);
-        color: #166534;
-        border: 1px solid rgba(34, 197, 94, 0.3);
-    }
-    
-    .feature-unavailable {
-        background: rgba(239, 68, 68, 0.2);
-        color: #991b1b;
-        border: 1px solid rgba(239, 68, 68, 0.3);
-    }
+    .confidence-high { color: #28a745; }
+    .confidence-medium { color: #ffc107; }
+    .confidence-low { color: #dc3545; }
 </style>
-""")
+""", unsafe_allow_html=True)
 
-def validate_user_input(query: str) -> tuple[bool, str]:
-    """Validate user input for Ghanaian startup ecosystem focus"""
-    
-    if not query or not query.strip():
-        return False, "Please enter a question about the Ghanaian startup ecosystem."
-    
-    query_lower = query.lower().strip()
-    
-    # Check if query is relevant to Ghanaian startup ecosystem
-    ghana_keywords = [
-        "ghana", "ghanian", "accra", "kumasi", "tamale", "kumasi", "tema",
-        "fintech", "agritech", "healthtech", "startup", "entrepreneur",
-        "business", "investment", "funding", "regulation", "compliance"
-    ]
-    
-    if not any(keyword in query_lower for keyword in ghana_keywords):
-        return False, "Please ask a question related to the Ghanaian startup ecosystem (fintech, agritech, or healthtech)."
-    
-    if len(query.strip()) < 10:
-        return False, "Please provide a more detailed question (at least 10 characters)."
-    
-    if len(query.strip()) > 1000:
-        return False, "Question is too long. Please keep it under 1000 characters."
-    
-    return True, ""
-
-def safe_execute(func, *args, **kwargs):
-    """Safely execute functions with error handling"""
+def initialize_app():
+    """Initialize the application and check dependencies"""
     try:
-        return func(*args, **kwargs)
-    except Exception as e:
-        logger.error(f"Error executing {func.__name__}: {e}")
-        return None
-
-def initialize_session_state():
-    """Initialize Streamlit session state"""
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    
-    if "current_provider" not in st.session_state:
-        st.session_state.current_provider = getattr(settings, 'PRIMARY_LLM_PROVIDER', 'unknown')
-    
-    if "user_profile" not in st.session_state:
-        st.session_state.user_profile = {
-            "sector": "general",
-            "region": "Greater Accra",
-            "experience_level": "beginner"
+        # Import required modules
+        from config.settings import settings
+        from api.vector_store import vector_store
+        from api.rag_engine import rag_engine
+        from utils.embeddings import embedding_service
+        
+        # Check if services are available
+        services_status = {
+            "settings": settings is not None,
+            "vector_store": vector_store is not None,
+            "rag_engine": rag_engine is not None,
+            "embedding_service": embedding_service is not None
         }
-    
-    if "use_advanced_features" not in st.session_state:
-        st.session_state.use_advanced_features = ADVANCED_RAG_AVAILABLE
+        
+        # Check if all required services are available
+        all_services_available = all(services_status.values())
+        
+        if not all_services_available:
+            st.error("⚠️ Some services failed to initialize. Please check your configuration.")
+            st.write("Services status:", services_status)
+            return False
+        
+        st.success("✅ All services initialized successfully!")
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Failed to initialize application: {e}")
+        logger.error(f"Application initialization failed: {e}")
+        return False
 
-def display_system_status():
-    """Display system status and configuration"""
+def display_header():
+    """Display the application header"""
+    st.markdown("""
+    <div class="main-header">
+        <div class="ghana-flag">🇬🇭</div>
+        <h1>UbuntuAI - African Business Intelligence Platform</h1>
+        <p>Empowering Ghanaian entrepreneurs with AI-driven insights in Fintech, Agritech, and Healthtech</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def display_sidebar():
+    """Display the sidebar with navigation and information"""
+    st.sidebar.title("🇬🇭 UbuntuAI")
+    st.sidebar.markdown("---")
     
-    st.sidebar.markdown("## 🇬🇭 System Status")
+    # Navigation
+    page = st.sidebar.selectbox(
+        "Navigation",
+        ["🏠 Home", "🤖 AI Chat", "📚 Knowledge Base", "📊 Analytics", "⚙️ Settings"]
+    )
     
-    # Provider status
-    available_providers = getattr(settings, 'get_available_llm_providers', lambda: [])()
-    current_provider = st.session_state.current_provider
+    st.sidebar.markdown("---")
     
-    st.sidebar.markdown("### 🤖 LLM Providers")
-    if available_providers:
-        for provider in available_providers:
-            status = "🟢" if provider == current_provider else "⚪"
-            st.sidebar.markdown(f"{status} {provider.title()}")
-    else:
-        st.sidebar.markdown("⚠️ No LLM providers configured")
+    # Ghanaian sectors
+    st.sidebar.subheader("🎯 Focus Sectors")
+    sectors = ["Fintech", "Agritech", "Healthtech", "Edtech", "Logistics", "E-commerce"]
+    for sector in sectors:
+        st.sidebar.markdown(f"• {sector}")
     
-    # RAG Engine status
-    st.sidebar.markdown("### 📚 Knowledge Base")
+    # Ghanaian regions
+    st.sidebar.subheader("📍 Coverage")
+    st.sidebar.markdown("All 16 regions of Ghana")
+    
+    st.sidebar.markdown("---")
+    
+    # System status
+    st.sidebar.subheader("🔧 System Status")
     try:
-        if rag_engine and hasattr(rag_engine, 'vector_store'):
-            st.sidebar.markdown("🟢 Basic RAG engine connected")
+        from api.vector_store import vector_store
+        if vector_store:
+            stats = vector_store.get_collection_stats()
+            st.sidebar.success(f"Vector Store: ✅")
+            st.sidebar.info(f"Documents: {stats.get('total_documents', 0)}")
         else:
-            st.sidebar.markdown("🔴 Basic RAG engine not connected")
+            st.sidebar.error("Vector Store: ❌")
     except:
-        st.sidebar.markdown("🔴 Basic RAG engine status unknown")
+        st.sidebar.error("Vector Store: ❌")
     
-    # Advanced features status
-    st.sidebar.markdown("### 🚀 Advanced Features")
-    
-    # Advanced RAG
-    if ADVANCED_RAG_AVAILABLE and advanced_rag_engine:
-        st.sidebar.markdown("🟢 Advanced RAG (CRAG/DRAG)")
-    else:
-        st.sidebar.markdown("🔴 Advanced RAG (CRAG/DRAG)")
-    
-    # Performance optimization
-    if PERFORMANCE_OPTIMIZATION_AVAILABLE:
-        st.sidebar.markdown("🟢 Performance optimization")
-    else:
-        st.sidebar.markdown("🔴 Performance optimization")
-    
-    # Security
-    if SECURITY_AVAILABLE:
-        st.sidebar.markdown("🟢 Security & rate limiting")
-    else:
-        st.sidebar.markdown("🔴 Security & rate limiting")
-    
-    # Ghanaian focus indicators
-    st.sidebar.markdown("### 🇬🇭 Ghanaian Focus")
-    ghana_sectors = getattr(settings, 'GHANA_STARTUP_SECTORS', ['Fintech', 'Agritech', 'Healthtech'])
-    ghana_regions = getattr(settings, 'GHANA_REGIONS', [])
-    
-    st.sidebar.markdown(f"🎯 **Sectors:** {', '.join(ghana_sectors)}")
-    st.sidebar.markdown(f"📍 **Regions:** {len(ghana_regions)} regions")
-    
-    # Performance metrics
-    st.sidebar.markdown("### 📊 Performance")
-    retrieval_strategy = getattr(settings, 'RETRIEVAL_STRATEGY', 'basic')
-    chunking_strategy = getattr(settings, 'CHUNKING_STRATEGY', 'basic')
-    use_reranking = getattr(settings, 'USE_RERANKING', False)
-    
-    st.sidebar.markdown(f"⚡ **Strategy:** {retrieval_strategy}")
-    st.sidebar.markdown(f"🔍 **Chunking:** {chunking_strategy}")
-    st.sidebar.markdown(f"📈 **Reranking:** {'Enabled' if use_reranking else 'Disabled'}")
+    return page
 
-def display_user_profile():
-    """Display and allow editing of user profile"""
+def display_home_page():
+    """Display the home page"""
+    st.header("🏠 Welcome to UbuntuAI")
     
-    st.sidebar.markdown("## 👤 Your Profile")
+    # Introduction
+    st.markdown("""
+    UbuntuAI is your intelligent companion for navigating Ghana's vibrant startup ecosystem. 
+    We focus on three key sectors that are driving innovation and economic growth in Ghana:
+    """)
     
-    # Get available options from settings
-    ghana_sectors = getattr(settings, 'GHANA_STARTUP_SECTORS', ['Fintech', 'Agritech', 'Healthtech'])
-    ghana_regions = getattr(settings, 'GHANA_REGIONS', ['Greater Accra', 'Ashanti', 'Western'])
+    # Sector cards
+    col1, col2, col3 = st.columns(3)
     
-    # Sector selection
-    sector = st.sidebar.selectbox(
-        "🎯 Primary Sector",
-        options=ghana_sectors,
-        index=ghana_sectors.index(st.session_state.user_profile["sector"])
-        if st.session_state.user_profile["sector"] in ghana_sectors else 0
-    )
+    with col1:
+        st.markdown("""
+        <div class="sector-card">
+            <h3>🏦 Fintech</h3>
+            <p>Digital payments, mobile money, banking solutions, and financial inclusion technologies</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Region selection
-    region = st.sidebar.selectbox(
-        "📍 Primary Region",
-        options=ghana_regions,
-        index=ghana_regions.index(st.session_state.user_profile["region"])
-        if st.session_state.user_profile["region"] in ghana_regions else 0
-    )
+    with col2:
+        st.markdown("""
+        <div class="sector-card">
+            <h3>🌾 Agritech</h3>
+            <p>Agricultural technology, smart farming, crop management, and food security solutions</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Experience level
-    experience_levels = ["beginner", "intermediate", "advanced", "expert"]
-    experience = st.sidebar.selectbox(
-        "🚀 Experience Level",
-        options=experience_levels,
-        index=experience_levels.index(st.session_state.user_profile["experience_level"])
-    )
+    with col3:
+        st.markdown("""
+        <div class="sector-card">
+            <h3>🏥 Healthtech</h3>
+            <p>Healthcare technology, telemedicine, medical devices, and health information systems</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Advanced features toggle
-    if ADVANCED_RAG_AVAILABLE:
-        use_advanced = st.sidebar.checkbox(
-            "🚀 Use Advanced Features (CRAG/DRAG)",
-            value=st.session_state.use_advanced_features,
-            help="Enable advanced RAG patterns for better responses"
-        )
-        st.session_state.use_advanced_features = use_advanced
+    # Features
+    st.subheader("🚀 Key Features")
     
-    # Update profile
-    if st.sidebar.button("💾 Update Profile"):
-        st.session_state.user_profile.update({
-            "sector": sector,
-            "region": region,
-            "experience_level": experience
-        })
-        st.sidebar.success("Profile updated!")
+    col1, col2 = st.columns(2)
     
-    # Display current profile
-    st.sidebar.markdown("### Current Profile:")
-    st.sidebar.markdown(f"**Sector:** {sector}")
-    st.sidebar.markdown(f"**Region:** {region}")
-    st.sidebar.markdown(f"**Experience:** {experience.title()}")
+    with col1:
+        st.markdown("""
+        - **AI-Powered Insights**: Get intelligent answers about Ghanaian business opportunities
+        - **Document Analysis**: Upload and analyze business documents, reports, and regulations
+        - **Sector Expertise**: Deep knowledge of fintech, agritech, and healthtech in Ghana
+        - **Regional Coverage**: Insights covering all 16 regions of Ghana
+        """)
     
-    # Feature status
-    st.sidebar.markdown("### 🔧 Feature Status")
-    features = [
-        ("Basic RAG", RAG_ENGINE_AVAILABLE),
-        ("Advanced RAG", ADVANCED_RAG_AVAILABLE),
-        ("Performance Optimization", PERFORMANCE_OPTIMIZATION_AVAILABLE),
-        ("Security", SECURITY_AVAILABLE)
-    ]
+    with col2:
+        st.markdown("""
+        - **Real-time Updates**: Stay current with the latest business trends and regulations
+        - **Practical Guidance**: Actionable advice for entrepreneurs and investors
+        - **WhatsApp Integration**: Access insights on the go via WhatsApp
+        - **Multi-language Support**: English and local language support
+        """)
     
-    for feature_name, is_available in features:
-        status_class = "feature-available" if is_available else "feature-unavailable"
-        status_text = "Available" if is_available else "Unavailable"
-        st.sidebar.markdown(f'<span class="feature-status {status_class}">{feature_name}: {status_text}</span>', unsafe_allow_html=True)
+    # Quick start
+    st.subheader("🚀 Quick Start")
+    st.markdown("""
+    1. **Ask Questions**: Use the AI Chat to ask about business opportunities in Ghana
+    2. **Upload Documents**: Add business documents to expand your knowledge base
+    3. **Explore Sectors**: Discover insights in fintech, agritech, and healthtech
+    4. **Get Analytics**: View trends and patterns in Ghana's startup ecosystem
+    """)
 
-def process_user_query(query: str) -> Optional[Dict[str, Any]]:
-    """Process user query using the appropriate RAG engine"""
+def display_chat_page():
+    """Display the AI chat page"""
+    st.header("🤖 AI Chat - Ask About Ghanaian Business")
     
+    # Check if RAG engine is available
     try:
-        # Get user context
-        user_context = {
-            "sector": st.session_state.user_profile["sector"],
-            "region": st.session_state.user_profile["region"],
-            "experience_level": st.session_state.user_profile["experience_level"],
-            "current_provider": st.session_state.current_provider
-        }
-        
-        # Security validation if available
-        if SECURITY_AVAILABLE:
-            try:
-                is_valid, message, security_metadata = security_manager.validate_request(
-                    content=query,
-                    content_type="query",
-                    user_context=user_context,
-                    user_id="anonymous",
-                    ip_address="127.0.0.1"
-                )
-                
-                if not is_valid:
-                    st.error(f"Security validation failed: {message}")
-                    return None
-                    
-            except Exception as e:
-                logger.warning(f"Security validation failed: {e}")
-        
-        # Query optimization if available
-        if PERFORMANCE_OPTIMIZATION_AVAILABLE:
-            try:
-                optimized_query = query_optimizer.optimize_query(query, user_context)
-                logger.info(f"Query optimized: {query[:50]}... -> {optimized_query[:50]}...")
-                query = optimized_query
-            except Exception as e:
-                logger.warning(f"Query optimization failed: {e}")
-        
-        # Process query with appropriate engine
-        if (st.session_state.use_advanced_features and 
-            ADVANCED_RAG_AVAILABLE and 
-            advanced_rag_engine):
-            
-            # Use advanced RAG engine
-            try:
-                import asyncio
-                response = asyncio.run(advanced_rag_engine.query_advanced(
-                    question=query,
-                    conversation_history=st.session_state.chat_history,
-                    user_context=user_context,
-                    provider=st.session_state.current_provider,
-                    use_advanced_patterns=True
-                ))
-                
-                # Convert RAGResponse to dict format
-                if hasattr(response, '__dict__'):
-                    response_dict = response.__dict__
-                else:
-                    response_dict = {
-                        "answer": getattr(response, 'answer', 'No answer generated'),
-                        "sources": getattr(response, 'sources', []),
-                        "follow_up_questions": getattr(response, 'follow_up_questions', []),
-                        "confidence": getattr(response, 'confidence', 0.5),
-                        "processing_time": getattr(response, 'processing_time', 0.0),
-                        "chunks_retrieved": getattr(response, 'chunks_retrieved', 0),
-                        "provider": getattr(response, 'provider', 'unknown'),
-                        "ghana_focus": True,
-                        "sectors_covered": getattr(response, 'sectors_covered', ['general'])
-                    }
-                
-                return response_dict
-                
-            except Exception as e:
-                logger.error(f"Advanced RAG query failed: {e}")
-                st.warning("Advanced RAG failed, falling back to basic RAG")
-        
-        # Fallback to basic RAG engine
-        if RAG_ENGINE_AVAILABLE and rag_engine:
-            try:
-                response = rag_engine.query(
-                    question=query,
-                    conversation_history=st.session_state.chat_history,
-                    user_context=user_context,
-                    provider=st.session_state.current_provider
-                )
-                return response
-            except Exception as e:
-                logger.error(f"Basic RAG query failed: {e}")
-                st.error("RAG engine not available")
-                return None
-        else:
-            st.error("No RAG engine available")
-            return None
-            
+        from api.rag_engine import rag_engine
+        if not rag_engine or not rag_engine.is_initialized():
+            st.error("❌ RAG engine not available. Please check your configuration.")
+            return
     except Exception as e:
-        logger.error(f"Error processing query: {e}")
-        st.error(f"Error processing your question: {str(e)}")
-        return None
-
-def display_response(response: Dict[str, Any]):
-    """Display the RAG response with Ghanaian styling"""
-    
-    if not response:
+        st.error(f"❌ Failed to load RAG engine: {e}")
         return
     
-    # Display main answer
-    st.markdown("### 🤖 UbuntuAI Response")
+    # Chat interface
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
     
-    answer_container = st.container()
-    with answer_container:
-        st.markdown(response.get("answer", "No answer provided"))
+    # Display chat history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
     
-    # Display confidence score
-    confidence = response.get("confidence", 0)
-    if confidence > 0:
-        st.markdown(f"**Confidence:** {confidence:.1%}")
+    # Chat input
+    if prompt := st.chat_input("Ask about business opportunities in Ghana..."):
+        # Add user message to chat history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Generate response
+        with st.chat_message("assistant"):
+            with st.spinner("🤔 Thinking..."):
+                try:
+                    response = rag_engine.query(prompt)
+                    
+                    if response and 'answer' in response:
+                        answer = response['answer']
+                        confidence = response.get('confidence', 0.0)
+                        sources = response.get('sources', [])
+                        
+                        # Display answer
+                        st.markdown(answer)
+                        
+                        # Display confidence
+                        if confidence >= 0.7:
+                            confidence_class = "confidence-high"
+                        elif confidence >= 0.4:
+                            confidence_class = "confidence-medium"
+                        else:
+                            confidence_class = "confidence-low"
+                        
+                        st.markdown(f"<p class='{confidence_class}'><strong>Confidence: {confidence:.1%}</strong></p>", 
+                                  unsafe_allow_html=True)
+                        
+                        # Display sources if available
+                        if sources:
+                            with st.expander("📚 Sources"):
+                                for i, source in enumerate(sources, 1):
+                                    st.markdown(f"**Source {i}:** {source.get('source', 'Unknown')}")
+                                    st.markdown(f"**Type:** {source.get('document_type', 'Document')}")
+                                    st.markdown(f"**Relevance:** {source.get('relevance_score', 'N/A')}")
+                                    st.markdown("---")
+                        
+                        # Add assistant message to chat history
+                        st.session_state.messages.append({"role": "assistant", "content": answer})
+                        
+                    else:
+                        st.error("Failed to generate response. Please try again.")
+                        
+                except Exception as e:
+                    st.error(f"Error generating response: {e}")
+                    logger.error(f"Chat error: {e}")
+
+def display_knowledge_base_page():
+    """Display the knowledge base page"""
+    st.header("📚 Knowledge Base")
     
-    # Display sources
-    sources = response.get("sources", [])
-    if sources:
-        st.markdown("### 📚 Sources")
-        for i, source in enumerate(sources[:5]):  # Limit to top 5 sources
-            with st.expander(f"Source {i+1}: {source.get('title', 'Unknown')}"):
-                st.markdown(f"**Content:** {source.get('content', 'No content')[:200]}...")
-                relevance = source.get('relevance', 'Unknown')
-                if isinstance(relevance, float):
-                    st.markdown(f"**Relevance:** {relevance:.1%}")
+    # Check if vector store is available
+    try:
+        from api.vector_store import vector_store
+        if not vector_store:
+            st.error("❌ Vector store not available. Please check your configuration.")
+            return
+    except Exception as e:
+        st.error(f"❌ Failed to load vector store: {e}")
+        return
+    
+    # Get collection stats
+    try:
+        stats = vector_store.get_collection_stats()
+        st.info(f"📊 **Collection:** {stats.get('collection_name', 'N/A')}")
+        st.info(f"📄 **Total Documents:** {stats.get('total_documents', 0)}")
+        st.info(f"🗂️ **Storage Location:** {stats.get('persist_directory', 'N/A')}")
+    except Exception as e:
+        st.error(f"Failed to get collection stats: {e}")
+    
+    # Document upload
+    st.subheader("📤 Upload Documents")
+    
+    uploaded_file = st.file_uploader(
+        "Choose a document to add to the knowledge base",
+        type=['pdf', 'txt', 'docx', 'xlsx'],
+        help="Supported formats: PDF, TXT, DOCX, XLSX"
+    )
+    
+    if uploaded_file is not None:
+        if st.button("Add to Knowledge Base"):
+            try:
+                # Process the uploaded file
+                from data.processor import data_processor
+                
+                # Read file content
+                file_content = uploaded_file.read()
+                file_name = uploaded_file.name
+                
+                # Process the document
+                document = {
+                    'text': file_content.decode('utf-8') if isinstance(file_content, bytes) else str(file_content),
+                    'metadata': {
+                        'source': file_name,
+                        'document_type': file_name.split('.')[-1].upper(),
+                        'uploaded_at': datetime.now().isoformat()
+                    }
+                }
+                
+                # Add to vector store
+                success = vector_store.add_documents([document])
+                
+                if success:
+                    st.success(f"✅ Document '{file_name}' added successfully!")
+                    st.rerun()
                 else:
-                    st.markdown(f"**Relevance:** {relevance}")
+                    st.error("❌ Failed to add document to knowledge base.")
+                    
+            except Exception as e:
+                st.error(f"❌ Error processing document: {e}")
+                logger.error(f"Document processing error: {e}")
     
-    # Display follow-up questions
-    follow_ups = response.get("follow_up_questions", [])
-    if follow_ups:
-        st.markdown("### 💡 Suggested Follow-up Questions")
-        for i, question in enumerate(follow_ups):
-            if st.button(f"❓ {question}", key=f"followup_{i}"):
-                st.session_state.user_input = question
-                st.rerun()
+    # Search documents
+    st.subheader("🔍 Search Knowledge Base")
     
-    # Display processing metadata
-    with st.expander("🔍 Processing Details"):
-        st.markdown(f"**Provider:** {response.get('provider', 'Unknown')}")
-        st.markdown(f"**Processing Time:** {response.get('processing_time', 'Unknown')}")
-        st.markdown(f"**Chunks Retrieved:** {response.get('chunks_retrieved', 'Unknown')}")
+    search_query = st.text_input("Enter search query:")
+    if search_query and st.button("Search"):
+        try:
+            results = vector_store.search(search_query, max_results=5)
+            
+            if results:
+                st.success(f"Found {len(results)} relevant documents:")
+                
+                for i, result in enumerate(results, 1):
+                    with st.expander(f"Document {i}: {result.get('metadata', {}).get('source', 'Unknown')}"):
+                        st.markdown(f"**Content:** {result.get('document', '')[:500]}...")
+                        st.markdown(f"**Source:** {result.get('metadata', {}).get('source', 'Unknown')}")
+                        st.markdown(f"**Type:** {result.get('metadata', {}).get('document_type', 'Document')}")
+                        st.markdown(f"**Relevance Score:** {result.get('distance', 'N/A')}")
+            else:
+                st.warning("No relevant documents found.")
+                
+        except Exception as e:
+            st.error(f"Search failed: {e}")
+
+def display_analytics_page():
+    """Display the analytics page"""
+    st.header("📊 Analytics & Insights")
+    
+    # Placeholder for analytics
+    st.info("📈 Analytics features are coming soon!")
+    
+    # Mock data for demonstration
+    st.subheader("🎯 Sector Distribution")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Fintech", "35%", "↑ 12%")
+    
+    with col2:
+        st.metric("Agritech", "28%", "↑ 8%")
+    
+    with col3:
+        st.metric("Healthtech", "22%", "↑ 15%")
+    
+    st.subheader("📍 Regional Activity")
+    st.markdown("""
+    - **Greater Accra**: 45% of startups
+    - **Ashanti**: 18% of startups  
+    - **Western**: 12% of startups
+    - **Other Regions**: 25% of startups
+    """)
+    
+    st.subheader("📅 Recent Trends")
+    st.markdown("""
+    - **Mobile Money Adoption**: Growing rapidly across all regions
+    - **Agricultural Technology**: Increasing investment in smart farming solutions
+    - **Healthcare Innovation**: Telemedicine platforms gaining traction
+    - **Digital Payments**: Fintech solutions expanding beyond urban areas
+    """)
+
+def display_settings_page():
+    """Display the settings page"""
+    st.header("⚙️ Settings & Configuration")
+    
+    # Configuration status
+    st.subheader("🔧 System Configuration")
+    
+    try:
+        from config.settings import settings
         
-        # Advanced features info
-        if response.get('ghana_focus'):
-            st.markdown("🇬🇭 **Ghanaian Focus:** Enabled")
+        config_info = settings.to_dict()
         
-        sectors_covered = response.get('sectors_covered', [])
-        if sectors_covered:
-            st.markdown(f"🎯 **Sectors Covered:** {', '.join(sectors_covered)}")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.info(f"**Primary LLM Provider:** {config_info.get('primary_llm_provider', 'N/A')}")
+            st.info(f"**Vector Store Type:** {config_info.get('vector_store_type', 'N/A')}")
+            st.info(f"**Retrieval Strategy:** {config_info.get('retrieval_strategy', 'N/A')}")
+        
+        with col2:
+            st.info(f"**Available LLM Providers:** {', '.join(config_info.get('available_llm_providers', []))}")
+            st.info(f"**Supported Sectors:** {len(config_info.get('supported_sectors', []))}")
+            st.info(f"**Ghana Regions:** {len(config_info.get('ghana_regions', []))}")
+        
+    except Exception as e:
+        st.error(f"Failed to load configuration: {e}")
+    
+    # Service status
+    st.subheader("🔍 Service Status")
+    
+    services = [
+        ("Vector Store", "api.vector_store", "vector_store"),
+        ("RAG Engine", "api.rag_engine", "rag_engine"),
+        ("Embedding Service", "utils.embeddings", "embedding_service"),
+        ("LLM Manager", "api.llm_providers", "llm_manager")
+    ]
+    
+    for service_name, module_path, var_name in services:
+        try:
+            module = __import__(module_path, fromlist=[var_name])
+            service = getattr(module, var_name)
+            
+            if service:
+                st.success(f"✅ {service_name}: Available")
+            else:
+                st.error(f"❌ {service_name}: Not available")
+        except Exception as e:
+            st.error(f"❌ {service_name}: Error - {e}")
+    
+    # Environment variables
+    st.subheader("🌍 Environment Variables")
+    
+    env_vars = [
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY", 
+        "ANTHROPIC_API_KEY",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN"
+    ]
+    
+    for var in env_vars:
+        value = os.getenv(var, "Not set")
+        if value != "Not set":
+            # Mask sensitive values
+            display_value = value[:8] + "..." if len(value) > 8 else value
+            st.success(f"✅ {var}: {display_value}")
+        else:
+            st.warning(f"⚠️ {var}: Not set")
 
 def main():
     """Main application function"""
-    
-    # Initialize session state
-    initialize_session_state()
-    
-    # Header
-    st.markdown("""
-    <div class="main-header">
-        <h1>🇬🇭 UbuntuAI</h1>
-        <p>Your AI Assistant for the Ghanaian Startup Ecosystem</p>
-        <div style="margin-top: 1rem;">
-            <span class="sector-badge sector-fintech">Fintech</span>
-            <span class="sector-badge sector-agritech">Agritech</span>
-            <span class="sector-badge sector-healthtech">Healthtech</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Sidebar
-    with st.sidebar:
-        display_system_status()
-        st.markdown("---")
-        display_user_profile()
-        
-        # Provider selection
-        st.markdown("## 🔄 Switch Provider")
-        available_providers = getattr(settings, 'get_available_llm_providers', lambda: [])()
-        if available_providers:
-            new_provider = st.selectbox(
-                "Select LLM Provider",
-                options=available_providers,
-                index=available_providers.index(st.session_state.current_provider)
-                if st.session_state.current_provider in available_providers else 0
-            )
-            
-            if new_provider != st.session_state.current_provider:
-                st.session_state.current_provider = new_provider
-                st.success(f"Switched to {new_provider.title()}")
-    
-    # Main chat interface
-    st.markdown("## 💬 Ask About Ghanaian Startups")
-    
-    # Chat input
-    user_input = st.text_area(
-        "Ask me anything about fintech, agritech, or healthtech in Ghana...",
-        height=100,
-        placeholder="e.g., What are the key regulations for fintech startups in Ghana?",
-        key="user_input"
-    )
-    
-    # Process button
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        process_button = st.button("🚀 Ask UbuntuAI", use_container_width=True)
-    
-    # Process query
-    if process_button and user_input:
-        # Validate input
-        is_valid, validation_message = validate_user_input(user_input)
-        
-        if not is_valid:
-            st.warning(validation_message)
+    try:
+        # Initialize the application
+        if not initialize_app():
+            st.error("Application initialization failed. Please check the logs and try again.")
             return
         
-        # Add user message to chat history
-        st.session_state.chat_history.append({
-            "role": "user",
-            "content": user_input,
-            "timestamp": datetime.now().isoformat()
-        })
+        # Display header
+        display_header()
         
-        # Show processing message
-        processing_text = "🤔 Thinking about your Ghanaian startup question..."
-        if st.session_state.use_advanced_features and ADVANCED_RAG_AVAILABLE:
-            processing_text += " (using advanced RAG patterns)"
+        # Display sidebar and get selected page
+        selected_page = display_sidebar()
         
-        with st.spinner(processing_text):
-            # Process query
-            response = process_user_query(user_input)
-            
-            if response:
-                # Add assistant response to chat history
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": response.get("answer", ""),
-                    "timestamp": datetime.now().isoformat()
-                })
-                
-                # Display response
-                display_response(response)
-                
-                # Clear input
-                st.session_state.user_input = ""
-            else:
-                st.error("Sorry, I couldn't process your question. Please try again.")
-    
-    # Display chat history
-    if st.session_state.chat_history:
-        st.markdown("## 📝 Chat History")
+        # Route to appropriate page
+        if selected_page == "🏠 Home":
+            display_home_page()
+        elif selected_page == "🤖 AI Chat":
+            display_chat_page()
+        elif selected_page == "📚 Knowledge Base":
+            display_knowledge_base_page()
+        elif selected_page == "📊 Analytics":
+            display_analytics_page()
+        elif selected_page == "⚙️ Settings":
+            display_settings_page()
         
-        for i, message in enumerate(st.session_state.chat_history):
-            if message["role"] == "user":
-                st.markdown(f"""
-                <div class="chat-message user-message">
-                    <strong>👤 You:</strong> {message["content"]}
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div class="chat-message assistant-message">
-                    <strong>🤖 UbuntuAI:</strong> {message["content"]}
-                </div>
-                """, unsafe_allow_html=True)
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center; color: #666;">
-        <p>🇬🇭 <strong>UbuntuAI</strong> - Empowering Ghanaian Entrepreneurs</p>
-        <p>Focusing on Fintech, Agritech, and Healthtech</p>
-        <p style="font-size: 0.8em; margin-top: 1rem;">
-            Advanced Features: {} | Performance: {} | Security: {}
-        </p>
-    </div>
-    """.format(
-        "✅" if ADVANCED_RAG_AVAILABLE else "❌",
-        "✅" if PERFORMANCE_OPTIMIZATION_AVAILABLE else "❌",
-        "✅" if SECURITY_AVAILABLE else "❌"
-    ), unsafe_allow_html=True)
+        # Footer
+        st.markdown("---")
+        st.markdown("""
+        <div style='text-align: center; color: #666;'>
+            🇬🇭 UbuntuAI - Empowering Ghanaian Entrepreneurs with AI Intelligence
+            <br>Built with ❤️ for Africa's startup ecosystem
+        </div>
+        """, unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"❌ Application error: {e}")
+        logger.error(f"Application error: {e}")
+        st.info("Please check the logs for more details and try refreshing the page.")
 
 if __name__ == "__main__":
     main()

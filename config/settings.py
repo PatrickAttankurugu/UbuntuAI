@@ -1,360 +1,207 @@
-import os
-import logging
-from typing import Dict, Any, List, Optional, Literal
-from dotenv import load_dotenv
+#!/usr/bin/env python3
+"""
+Configuration settings for UbuntuAI
+Centralized configuration management for the African Business Intelligence Platform
+"""
 
+import os
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+import logging
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-load_dotenv()
-
-class SettingsValidationError(Exception):
-    """Custom exception for settings validation errors"""
-    pass
-
-class ModernRAGSettings:
-    """
-    Modern RAG Configuration with multi-provider support and advanced features
-    """
+class Settings:
+    """Application settings and configuration"""
     
     def __init__(self):
-        """Initialize settings with validation"""
-        try:
-            self._load_api_keys()
-            self._load_llm_config()
-            self._load_embedding_config()
-            self._load_vector_store_config()
-            self._load_retrieval_config()
-            self._load_evaluation_config()
-            self._load_business_context()
-            self._load_ui_config()
-            self._load_performance_config()
-            self._load_integration_config()
-            
-            self.validate_config()
-            logger.info("Modern RAG settings loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize settings: {e}")
-            raise SettingsValidationError(f"Configuration error: {e}")
-    
-    def _load_api_keys(self):
-        """Load API keys for multiple providers"""
-        # Primary LLM Provider
-        self.PRIMARY_LLM_PROVIDER = os.getenv("PRIMARY_LLM_PROVIDER", "openai")
+        # Base paths
+        self.BASE_DIR = Path(__file__).parent.parent
+        self.DATA_DIR = self.BASE_DIR / "data"
+        self.VECTOR_DB_DIR = self.BASE_DIR / "vector_db"
+        self.LOGS_DIR = self.BASE_DIR / "logs"
         
-        # LLM Provider Keys
-        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-        self.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-        self.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-        self.COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+        # Create necessary directories
+        self._create_directories()
         
-        # Embedding Provider Keys
-        self.PRIMARY_EMBEDDING_PROVIDER = os.getenv("PRIMARY_EMBEDDING_PROVIDER", "sentence-transformers")
+        # API Keys
+        self.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+        self.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
         
-        # Vector Store Keys
-        self.PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-        self.PINECONE_ENV = os.getenv("PINECONE_ENV")
+        # Twilio Configuration (for WhatsApp)
+        self.TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+        self.TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+        self.TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "")
         
-        # Evaluation & Monitoring
-        self.LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
-        self.LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
-        self.LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
+        # LLM Configuration
+        self.PRIMARY_LLM_PROVIDER = os.getenv("PRIMARY_LLM_PROVIDER", "google")
+        self.LLM_MODEL = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+        self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
+        self.EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "768"))
         
-        # Validate at least one LLM provider
-        available_providers = []
-        if self.OPENAI_API_KEY:
-            available_providers.append("openai")
-        if self.ANTHROPIC_API_KEY:
-            available_providers.append("anthropic")
-        if self.GOOGLE_API_KEY:
-            available_providers.append("google")
-        
-        if not available_providers:
-            logger.warning("No LLM API keys configured - some features will be disabled")
-        else:
-            logger.info(f"Available LLM providers: {available_providers}")
-    
-    def _load_llm_config(self):
-        """Load LLM provider configurations"""
-        self.LLM_CONFIGS = {
-            "openai": {
-                "model": os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
-                "temperature": float(os.getenv("OPENAI_TEMPERATURE", "0.3")),
-                "max_tokens": int(os.getenv("OPENAI_MAX_TOKENS", "1000")),
-                "fallback_model": "gpt-3.5-turbo"
-            },
-            "anthropic": {
-                "model": os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307"),
-                "temperature": float(os.getenv("ANTHROPIC_TEMPERATURE", "0.3")),
-                "max_tokens": int(os.getenv("ANTHROPIC_MAX_TOKENS", "1000")),
-                "fallback_model": "claude-3-haiku-20240307"
-            },
-            "google": {
-                "model": os.getenv("GOOGLE_MODEL", "gemini-pro"),
-                "temperature": float(os.getenv("GOOGLE_TEMPERATURE", "0.3")),
-                "max_tokens": int(os.getenv("GOOGLE_MAX_TOKENS", "1000")),
-                "fallback_model": "gemini-pro"
-            },
-            "ollama": {
-                "model": os.getenv("OLLAMA_MODEL", "llama2"),
-                "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.3")),
-                "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-                "fallback_model": "llama2"
-            }
-        }
-    
-    def _load_embedding_config(self):
-        """Load embedding provider configurations"""
-        self.EMBEDDING_CONFIGS = {
-            "openai": {
-                "model": os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
-                "dimensions": int(os.getenv("OPENAI_EMBEDDING_DIMS", "1536"))
-            },
-            "sentence-transformers": {
-                "model": os.getenv("ST_EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5"),
-                "dimensions": int(os.getenv("ST_EMBEDDING_DIMS", "1024")),
-                "device": os.getenv("ST_DEVICE", "cpu")
-            },
-            "google": {
-                "model": os.getenv("GOOGLE_EMBEDDING_MODEL", "models/embedding-001"),
-                "dimensions": int(os.getenv("GOOGLE_EMBEDDING_DIMS", "768"))
-            },
-            "cohere": {
-                "model": os.getenv("COHERE_EMBEDDING_MODEL", "embed-english-v3.0"),
-                "dimensions": int(os.getenv("COHERE_EMBEDDING_DIMS", "1024"))
-            }
-        }
-    
-    def _load_vector_store_config(self):
-        """Load vector store configurations"""
+        # Vector Store Configuration
         self.VECTOR_STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", "chroma")
+        self.VECTOR_STORE_PATH = str(self.VECTOR_DB_DIR / "chroma_db")
+        self.COLLECTION_NAME = os.getenv("COLLECTION_NAME", "ubuntuai_knowledge")
         
-        # ChromaDB Configuration
-        self.CHROMA_PERSIST_DIRECTORY = os.getenv("CHROMA_PERSIST_DIRECTORY", "./vector_db")
-        self.COLLECTION_NAME = os.getenv("COLLECTION_NAME", "african_business_knowledge")
-        
-        # Pinecone Configuration
-        self.PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "ubuntu-ai")
-        
-        # FAISS Configuration
-        self.FAISS_INDEX_PATH = os.getenv("FAISS_INDEX_PATH", "./vector_db/faiss_index")
-        
-        os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
-    
-    def _load_retrieval_config(self):
-        """Load advanced retrieval configurations"""
-        # Retrieval Strategy
-        self.RETRIEVAL_STRATEGY = os.getenv("RETRIEVAL_STRATEGY", "hybrid")  # hybrid, semantic, keyword
-        
-        # Similarity Search
-        self.SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.3"))
-        self.MAX_RETRIEVED_CHUNKS = int(os.getenv("MAX_RETRIEVED_CHUNKS", "20"))
-        
-        # Hybrid Search Weights
-        self.SEMANTIC_WEIGHT = float(os.getenv("SEMANTIC_WEIGHT", "0.7"))
-        self.KEYWORD_WEIGHT = float(os.getenv("KEYWORD_WEIGHT", "0.3"))
-        
-        # Re-ranking
-        self.USE_RERANKING = os.getenv("USE_RERANKING", "true").lower() == "true"
-        self.RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-2-v2")
-        self.RERANKED_TOP_K = int(os.getenv("RERANKED_TOP_K", "5"))
-        
-        # Chunking Strategy
-        self.CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "recursive")  # recursive, semantic, adaptive
+        # RAG Configuration
+        self.RETRIEVAL_STRATEGY = os.getenv("RETRIEVAL_STRATEGY", "hybrid")
+        self.MAX_RETRIEVAL_RESULTS = int(os.getenv("MAX_RETRIEVAL_RESULTS", "5"))
         self.CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
         self.CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
         
-        # Context Configuration
-        self.CONTEXT_WINDOW = int(os.getenv("CONTEXT_WINDOW", "4000"))
-        self.MAX_CONTEXT_CHUNKS = int(os.getenv("MAX_CONTEXT_CHUNKS", "10"))
-    
-    def _load_evaluation_config(self):
-        """Load evaluation and monitoring configurations"""
-        # RAGAS Evaluation
-        self.USE_RAGAS_EVALUATION = os.getenv("USE_RAGAS_EVALUATION", "true").lower() == "true"
-        self.RAGAS_METRICS = os.getenv("RAGAS_METRICS", "faithfulness,answer_relevancy,context_precision").split(",")
-        
-        # LangFuse Monitoring
-        self.USE_LANGFUSE = os.getenv("USE_LANGFUSE", "false").lower() == "true"
-        
-        # Self-Reflection
-        self.USE_SELF_REFLECTION = os.getenv("USE_SELF_REFLECTION", "true").lower() == "true"
-        self.REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "auto")  # auto uses primary provider
-        
-        # Evaluation Dataset
-        self.EVAL_DATASET_PATH = os.getenv("EVAL_DATASET_PATH", "./data/eval_dataset.json")
-    
-    def _load_business_context(self):
-        """Load business context data focused on Ghanaian startup ecosystem"""
-        # Focus only on Ghana
+        # Ghana-specific Configuration
+        self.SUPPORTED_SECTORS = [
+            "fintech", "agritech", "healthtech", "edtech", 
+            "logistics", "ecommerce", "renewable_energy"
+        ]
         self.GHANA_REGIONS = [
-            "Greater Accra", "Ashanti", "Western", "Central", "Eastern", 
-            "Volta", "Northern", "Upper East", "Upper West", "Bono", 
-            "Bono East", "Ahafo", "Savannah", "North East", "Oti"
+            "Greater Accra", "Ashanti", "Western", "Central", "Eastern",
+            "Volta", "Northern", "Upper East", "Upper West", "Bono",
+            "Bono East", "Ahafo", "Savannah", "North East", "Oti", "Western North"
         ]
         
-        # Focus only on the three target sectors
-        self.GHANA_STARTUP_SECTORS = [
-            "Fintech", "Agritech", "Healthtech"
-        ]
-        
-        # Ghana-specific funding stages and sources
-        self.GHANA_FUNDING_STAGES = [
-            "Idea", "Pre-seed", "Seed", "Series A", "Series B", "Series C",
-            "Growth", "Bridge", "Mezzanine", "IPO", "Grant", "Government"
-        ]
-        
-        # Ghana-specific business entities
-        self.GHANA_BUSINESS_ENTITIES = [
-            "Ghana Investment Promotion Centre (GIPC)",
-            "Ghana Enterprise Agency (GEA)",
-            "Bank of Ghana (BoG)",
-            "Ghana Revenue Authority (GRA)",
-            "Registrar General's Department",
-            "Ghana Standards Authority (GSA)",
-            "Food and Drugs Authority (FDA)",
-            "Ministry of Food and Agriculture (MoFA)",
-            "Ministry of Health (MoH)",
-            "Ministry of Finance (MoF)"
-        ]
-        
-        # Ghana-specific startup ecosystem organizations
-        self.GHANA_ECOSYSTEM_ORGS = [
-            "MEST Africa", "Kosmos Innovation Center", "Impact Hub Accra",
-            "Ghana Tech Lab", "iSpace Foundation", "Village Capital",
-            "Ghana Angel Investor Network", "Ghana Venture Capital Trust Fund"
-        ]
-    
-    def _load_ui_config(self):
-        """Load UI configuration"""
-        self.APP_TITLE = os.getenv("APP_TITLE", "UbuntuAI - Modern African Business Intelligence")
-        self.APP_DESCRIPTION = os.getenv("APP_DESCRIPTION", "Next-generation AI assistant for African entrepreneurship")
-        self.CHAT_PLACEHOLDER = os.getenv("CHAT_PLACEHOLDER", "Ask me anything about African business...")
-    
-    def _load_performance_config(self):
-        """Load performance configurations"""
-        # Caching
-        self.CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
-        self.USE_SEMANTIC_CACHE = os.getenv("USE_SEMANTIC_CACHE", "true").lower() == "true"
-        
-        # Concurrency
+        # Performance Configuration
         self.MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "10"))
         self.REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "30"))
+        self.CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
         
-        # Batch Processing
-        self.BATCH_SIZE = int(os.getenv("BATCH_SIZE", "32"))
-        self.ENABLE_STREAMING = os.getenv("ENABLE_STREAMING", "true").lower() == "true"
-    
-    def _load_integration_config(self):
-        """Load integration configurations"""
-        # WhatsApp/Twilio
-        self.TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-        self.TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-        self.TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
+        # Security Configuration
+        self.ENABLE_RATE_LIMITING = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
+        self.MAX_REQUESTS_PER_MINUTE = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "60"))
+        self.ENABLE_CONTENT_FILTERING = os.getenv("ENABLE_CONTENT_FILTERING", "true").lower() == "true"
         
-        # Mobile Optimization
-        self.MOBILE_MAX_CONTEXT = int(os.getenv("MOBILE_MAX_CONTEXT", "2000"))
-        self.MOBILE_MAX_RESPONSE = int(os.getenv("MOBILE_MAX_RESPONSE", "500"))
+        # Logging Configuration
+        self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+        self.ENABLE_FILE_LOGGING = os.getenv("ENABLE_FILE_LOGGING", "true").lower() == "true"
         
-        # Agent Configuration
-        self.USE_LANGCHAIN_AGENTS = os.getenv("USE_LANGCHAIN_AGENTS", "true").lower() == "true"
-        self.AGENT_MAX_ITERATIONS = int(os.getenv("AGENT_MAX_ITERATIONS", "5"))
-        self.AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "120"))
+        # Validation
+        self._validate_configuration()
     
-    def get_llm_config(self, provider: str = None) -> Dict[str, Any]:
-        """Get LLM configuration for specified provider"""
-        provider = provider or self.PRIMARY_LLM_PROVIDER
-        return self.LLM_CONFIGS.get(provider, self.LLM_CONFIGS["openai"])
+    def _create_directories(self):
+        """Create necessary directories if they don't exist"""
+        directories = [
+            self.DATA_DIR,
+            self.DATA_DIR / "processed",
+            self.DATA_DIR / "sources",
+            self.VECTOR_DB_DIR,
+            self.LOGS_DIR
+        ]
+        
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
     
-    def get_embedding_config(self, provider: str = None) -> Dict[str, Any]:
-        """Get embedding configuration for specified provider"""
-        provider = provider or self.PRIMARY_EMBEDDING_PROVIDER
-        return self.EMBEDDING_CONFIGS.get(provider, self.EMBEDDING_CONFIGS["sentence-transformers"])
+    def _validate_configuration(self):
+        """Validate critical configuration settings"""
+        errors = []
+        
+        # Check required API keys
+        if not self.GOOGLE_API_KEY:
+            errors.append("GOOGLE_API_KEY is required")
+        
+        # Check if directories exist
+        if not self.DATA_DIR.exists():
+            errors.append(f"Data directory {self.DATA_DIR} does not exist")
+        
+        # Log configuration status
+        if errors:
+            logger.error(f"Configuration validation failed: {', '.join(errors)}")
+            for error in errors:
+                logger.error(f"  - {error}")
+        else:
+            logger.info("Configuration validation passed")
     
     def get_available_llm_providers(self) -> List[str]:
-        """Get list of available LLM providers based on API keys"""
+        """Get list of available LLM providers based on configured API keys"""
         providers = []
+        
+        if self.GOOGLE_API_KEY:
+            providers.append("google")
         if self.OPENAI_API_KEY:
             providers.append("openai")
         if self.ANTHROPIC_API_KEY:
             providers.append("anthropic")
-        if self.GOOGLE_API_KEY:
-            providers.append("google")
-        # Ollama is always available if running locally
-        providers.append("ollama")
+        
         return providers
     
-    def get_available_embedding_providers(self) -> List[str]:
-        """Get list of available embedding providers"""
-        providers = ["sentence-transformers"]  # Always available
-        if self.OPENAI_API_KEY:
-            providers.append("openai")
-        if self.GOOGLE_API_KEY:
-            providers.append("google")
-        if self.COHERE_API_KEY:
-            providers.append("cohere")
-        return providers
+    def is_llm_provider_available(self, provider: str) -> bool:
+        """Check if a specific LLM provider is available"""
+        return provider in self.get_available_llm_providers()
     
-    def validate_config(self) -> bool:
-        """Validate configuration settings"""
-        errors = []
+    def get_llm_config(self, provider: str) -> Dict[str, Any]:
+        """Get configuration for a specific LLM provider"""
+        configs = {
+            "google": {
+                "api_key": self.GOOGLE_API_KEY,
+                "model": self.LLM_MODEL,
+                "temperature": 0.7,
+                "max_tokens": 2048
+            },
+            "openai": {
+                "api_key": self.OPENAI_API_KEY,
+                "model": "gpt-4",
+                "temperature": 0.7,
+                "max_tokens": 2048
+            },
+            "anthropic": {
+                "api_key": self.ANTHROPIC_API_KEY,
+                "model": "claude-3-sonnet-20240229",
+                "temperature": 0.7,
+                "max_tokens": 2048
+            }
+        }
         
-        # Check at least one LLM provider
-        if not self.get_available_llm_providers():
-            errors.append("No LLM API keys configured")
-        
-        # Validate numeric ranges
-        if not 0 <= self.SIMILARITY_THRESHOLD <= 1:
-            errors.append("SIMILARITY_THRESHOLD must be between 0 and 1")
-        
-        if not 0 <= self.SEMANTIC_WEIGHT <= 1:
-            errors.append("SEMANTIC_WEIGHT must be between 0 and 1")
-        
-        if abs(self.SEMANTIC_WEIGHT + self.KEYWORD_WEIGHT - 1.0) > 0.01:
-            errors.append("SEMANTIC_WEIGHT + KEYWORD_WEIGHT must equal 1.0")
-        
-        # Validate paths
-        try:
-            os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
-        except (OSError, PermissionError) as e:
-            errors.append(f"Cannot create vector database directory: {e}")
-        
-        if errors:
-            raise SettingsValidationError("; ".join(errors))
-        
-        return True
+        return configs.get(provider, {})
     
     def to_dict(self) -> Dict[str, Any]:
-        """Export settings as dictionary (excluding sensitive data)"""
+        """Convert settings to dictionary for logging/debugging"""
         return {
-            "app_title": self.APP_TITLE,
             "primary_llm_provider": self.PRIMARY_LLM_PROVIDER,
-            "primary_embedding_provider": self.PRIMARY_EMBEDDING_PROVIDER,
+            "available_llm_providers": self.get_available_llm_providers(),
             "vector_store_type": self.VECTOR_STORE_TYPE,
             "retrieval_strategy": self.RETRIEVAL_STRATEGY,
-            "chunking_strategy": self.CHUNKING_STRATEGY,
-            "use_reranking": self.USE_RERANKING,
-            "use_ragas_evaluation": self.USE_RAGAS_EVALUATION,
-            "available_llm_providers": self.get_available_llm_providers(),
-            "available_embedding_providers": self.get_available_embedding_providers(),
-            "supported_countries": len(self.GHANA_REGIONS),
-            "supported_sectors": len(self.GHANA_STARTUP_SECTORS)
+            "supported_sectors": self.SUPPORTED_SECTORS,
+            "ghana_regions": self.GHANA_REGIONS,
+            "data_directory": str(self.DATA_DIR),
+            "vector_db_directory": str(self.VECTOR_DB_DIR)
         }
+    
+    def update_setting(self, key: str, value: Any):
+        """Update a setting value"""
+        if hasattr(self, key):
+            setattr(self, key, value)
+            logger.info(f"Updated setting {key} = {value}")
+        else:
+            logger.warning(f"Unknown setting key: {key}")
 
-# Global settings instance
-try:
-    settings = ModernRAGSettings()
-except SettingsValidationError as e:
-    logger.error(f"Failed to load settings: {e}")
-    # Create minimal fallback
-    settings = type('FallbackSettings', (), {
-        'APP_TITLE': 'UbuntuAI - Configuration Error',
-        'validate_config': lambda: False,
-        'get_available_llm_providers': lambda: [],
-        'PRIMARY_LLM_PROVIDER': 'openai'
-    })()
-    logger.warning("Using fallback settings due to configuration errors")
+# Create global settings instance
+settings = Settings()
+
+# Export commonly used settings
+GOOGLE_API_KEY = settings.GOOGLE_API_KEY
+OPENAI_API_KEY = settings.OPENAI_API_KEY
+ANTHROPIC_API_KEY = settings.ANTHROPIC_API_KEY
+TWILIO_ACCOUNT_SID = settings.TWILIO_ACCOUNT_SID
+TWILIO_AUTH_TOKEN = settings.TWILIO_AUTH_TOKEN
+TWILIO_WHATSAPP_NUMBER = settings.TWILIO_WHATSAPP_NUMBER
+PRIMARY_LLM_PROVIDER = settings.PRIMARY_LLM_PROVIDER
+LLM_MODEL = settings.LLM_MODEL
+EMBEDDING_MODEL = settings.EMBEDDING_MODEL
+EMBEDDING_DIMENSIONS = settings.EMBEDDING_DIMENSIONS
+VECTOR_STORE_TYPE = settings.VECTOR_STORE_TYPE
+RETRIEVAL_STRATEGY = settings.RETRIEVAL_STRATEGY
+MAX_RETRIEVAL_RESULTS = settings.MAX_RETRIEVAL_RESULTS
+CHUNK_SIZE = settings.CHUNK_SIZE
+CHUNK_OVERLAP = settings.CHUNK_OVERLAP
+SUPPORTED_SECTORS = settings.SUPPORTED_SECTORS
+GHANA_REGIONS = settings.GHANA_REGIONS

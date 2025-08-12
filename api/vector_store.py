@@ -1,88 +1,39 @@
+#!/usr/bin/env python3
 """
-Modern Multi-Provider Vector Store for UbuntuAI
-Supports ChromaDB, Pinecone, FAISS with LangChain integration
+Vector store implementation for UbuntuAI
+Uses ChromaDB for document storage and retrieval
 """
 
-import logging
-from typing import List, Dict, Any, Optional, Union
-from abc import ABC, abstractmethod
-import json
 import os
-from datetime import datetime
-
-# LangChain Vector Store imports
-from langchain_core.documents import Document
-from langchain_core.vectorstores import VectorStore
-from langchain_chroma import Chroma
-from langchain_community.vectorstores import FAISS
-from langchain_core.embeddings import Embeddings
-
-# Vector store specific imports
-try:
-    from langchain_pinecone import PineconeVectorStore
-    import pinecone
-    PINECONE_AVAILABLE = True
-except ImportError:
-    PINECONE_AVAILABLE = False
-
+import logging
+from typing import List, Dict, Any, Optional, Tuple
+from pathlib import Path
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+from chromadb.utils import embedding_functions
+import json
+import uuid
+from datetime import datetime
 
 from config.settings import settings
-from utils.embeddings import ModernEmbeddingManager
+from utils.embeddings import embedding_service
 
 logger = logging.getLogger(__name__)
 
-class BaseVectorStoreProvider(ABC):
-    """Abstract base class for vector store providers"""
+class VectorStore:
+    """ChromaDB-based vector store for document storage and retrieval"""
     
-    def __init__(self, embedding_provider: Embeddings):
-        self.embedding_provider = embedding_provider
-        self.vector_store = None
-        self.is_available = False
-        self._initialize()
-    
-    @abstractmethod
-    def _initialize(self):
-        """Initialize the vector store provider"""
-        pass
-    
-    @abstractmethod
-    def add_documents(self, documents: List[Document], **kwargs) -> List[str]:
-        """Add documents to vector store"""
-        pass
-    
-    @abstractmethod
-    def similarity_search(self, query: str, k: int = 10, **kwargs) -> List[Document]:
-        """Perform similarity search"""
-        pass
-    
-    @abstractmethod
-    def similarity_search_with_score(self, query: str, k: int = 10, **kwargs) -> List[tuple]:
-        """Perform similarity search with scores"""
-        pass
-    
-    def get_langchain_vectorstore(self) -> Optional[VectorStore]:
-        """Get LangChain-compatible vector store"""
-        return self.vector_store
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get vector store statistics"""
-        return {
-            "provider": self.__class__.__name__,
-            "is_available": self.is_available,
-            "vector_store_type": type(self.vector_store).__name__ if self.vector_store else None
-        }
-
-class ChromaVectorStoreProvider(BaseVectorStoreProvider):
-    """ChromaDB vector store provider"""
-    
-    def _initialize(self):
+    def __init__(self):
+        """Initialize the vector store"""
+        self.collection_name = settings.COLLECTION_NAME
+        self.persist_directory = settings.VECTOR_STORE_PATH
+        self.embedding_dimensions = settings.EMBEDDING_DIMENSIONS
+        
+        # Create persist directory
+        os.makedirs(self.persist_directory, exist_ok=True)
+        
+        # Initialize ChromaDB client
         try:
-            # Setup ChromaDB client
-            self.persist_directory = settings.CHROMA_PERSIST_DIRECTORY
-            os.makedirs(self.persist_directory, exist_ok=True)
-            
             self.client = chromadb.PersistentClient(
                 path=self.persist_directory,
                 settings=ChromaSettings(
@@ -90,494 +41,363 @@ class ChromaVectorStoreProvider(BaseVectorStoreProvider):
                     allow_reset=True
                 )
             )
-            
-            # Initialize LangChain Chroma vector store
-            self.vector_store = Chroma(
-                client=self.client,
-                collection_name=settings.COLLECTION_NAME,
-                embedding_function=self.embedding_provider,
-                persist_directory=self.persist_directory
-            )
-            
-            self.is_available = True
-            logger.info(f"ChromaDB initialized at {self.persist_directory}")
-            
+            logger.info(f"ChromaDB client initialized at {self.persist_directory}")
         except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB: {e}")
-            self.is_available = False
-    
-    def add_documents(self, documents: List[Document], **kwargs) -> List[str]:
-        """Add documents to ChromaDB"""
-        if not self.is_available:
-            raise ValueError("ChromaDB not available")
+            logger.error(f"Failed to initialize ChromaDB client: {e}")
+            raise
         
+        # Initialize collection
+        self._initialize_collection()
+    
+    def _initialize_collection(self):
+        """Initialize or get the document collection"""
         try:
-            ids = kwargs.get('ids')
-            if not ids:
-                ids = [f"doc_{i}_{hash(doc.page_content) % 10000}" for i, doc in enumerate(documents)]
-            
-            # Add documents using LangChain interface
-            added_ids = self.vector_store.add_documents(documents, ids=ids)
-            
-            logger.info(f"Added {len(documents)} documents to ChromaDB")
-            return added_ids
-            
+            # Check if collection exists
+            try:
+                self.collection = self.client.get_collection(
+                    name=self.collection_name,
+                    embedding_function=self._get_embedding_function()
+                )
+                logger.info(f"Using existing collection: {self.collection_name}")
+            except Exception:
+                # Create new collection
+                self.collection = self.client.create_collection(
+                    name=self.collection_name,
+                    embedding_function=self._get_embedding_function(),
+                    metadata={"description": "UbuntuAI Knowledge Base"}
+                )
+                logger.info(f"Created new collection: {self.collection_name}")
+        
         except Exception as e:
-            logger.error(f"Failed to add documents to ChromaDB: {e}")
+            logger.error(f"Failed to initialize collection: {e}")
             raise
     
-    def similarity_search(self, query: str, k: int = 10, **kwargs) -> List[Document]:
-        """Perform similarity search"""
-        if not self.is_available:
-            return []
+    def _get_embedding_function(self):
+        """Get the appropriate embedding function"""
+        if embedding_service and embedding_service.is_initialized():
+            # Use custom embedding function that calls our service
+            return CustomEmbeddingFunction(embedding_service)
+        else:
+            # Fallback to default ChromaDB embedding function
+            logger.warning("Using default ChromaDB embedding function")
+            return embedding_functions.DefaultEmbeddingFunction()
+    
+    def add_documents(self, documents: List[Dict[str, Any]]) -> bool:
+        """
+        Add documents to the vector store
+        
+        Args:
+            documents: List of document dictionaries with 'text', 'metadata', etc.
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not documents:
+            logger.warning("No documents provided for addition")
+            return False
         
         try:
-            # Use LangChain interface
-            filter_dict = kwargs.get('filter')
-            results = self.vector_store.similarity_search(
-                query=query,
-                k=k,
-                filter=filter_dict
-            )
+            # Prepare documents for ChromaDB
+            ids = []
+            texts = []
+            metadatas = []
             
-            return results
-            
-        except Exception as e:
-            logger.error(f"ChromaDB similarity search failed: {e}")
-            return []
-    
-    def similarity_search_with_score(self, query: str, k: int = 10, **kwargs) -> List[tuple]:
-        """Perform similarity search with scores"""
-        if not self.is_available:
-            return []
-        
-        try:
-            filter_dict = kwargs.get('filter')
-            results = self.vector_store.similarity_search_with_score(
-                query=query,
-                k=k,
-                filter=filter_dict
-            )
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"ChromaDB similarity search with score failed: {e}")
-            return []
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get ChromaDB statistics"""
-        base_stats = super().get_stats()
-        
-        if self.is_available:
-            try:
-                collection = self.client.get_collection(settings.COLLECTION_NAME)
-                count = collection.count()
+            for doc in documents:
+                # Generate unique ID if not provided
+                doc_id = doc.get('id', str(uuid.uuid4()))
                 
-                base_stats.update({
-                    "total_documents": count,
-                    "collection_name": settings.COLLECTION_NAME,
-                    "persist_directory": self.persist_directory
+                # Extract text content
+                text = doc.get('text', '')
+                if not text:
+                    logger.warning(f"Document {doc_id} has no text content, skipping")
+                    continue
+                
+                # Prepare metadata
+                metadata = doc.get('metadata', {})
+                metadata.update({
+                    'added_at': datetime.now().isoformat(),
+                    'document_type': doc.get('type', 'unknown'),
+                    'source': doc.get('source', 'unknown')
                 })
-            except Exception as e:
-                base_stats["error"] = str(e)
-        
-        return base_stats
-
-class PineconeVectorStoreProvider(BaseVectorStoreProvider):
-    """Pinecone vector store provider"""
-    
-    def _initialize(self):
-        if not PINECONE_AVAILABLE:
-            logger.warning("Pinecone not available - install pinecone-client")
-            return
-        
-        try:
-            if not settings.PINECONE_API_KEY:
-                logger.warning("Pinecone API key not configured")
-                return
+                
+                ids.append(doc_id)
+                texts.append(text)
+                metadatas.append(metadata)
             
-            # Initialize Pinecone
-            pinecone.init(
-                api_key=settings.PINECONE_API_KEY,
-                environment=settings.PINECONE_ENV
-            )
-            
-            # Create or get index
-            index_name = settings.PINECONE_INDEX_NAME
-            
-            if index_name not in pinecone.list_indexes():
-                # Create index if it doesn't exist
-                embedding_config = settings.get_embedding_config()
-                pinecone.create_index(
-                    name=index_name,
-                    dimension=embedding_config["dimensions"],
-                    metric="cosine"
-                )
-                logger.info(f"Created Pinecone index: {index_name}")
-            
-            # Initialize LangChain Pinecone vector store
-            self.vector_store = PineconeVectorStore(
-                index_name=index_name,
-                embedding=self.embedding_provider,
-                namespace=""
-            )
-            
-            self.is_available = True
-            logger.info(f"Pinecone initialized with index: {index_name}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Pinecone: {e}")
-            self.is_available = False
-    
-    def add_documents(self, documents: List[Document], **kwargs) -> List[str]:
-        """Add documents to Pinecone"""
-        if not self.is_available:
-            raise ValueError("Pinecone not available")
-        
-        try:
-            ids = kwargs.get('ids')
             if not ids:
-                ids = [f"doc_{i}_{hash(doc.page_content) % 10000}" for i, doc in enumerate(documents)]
+                logger.warning("No valid documents to add")
+                return False
             
-            added_ids = self.vector_store.add_documents(documents, ids=ids)
-            
-            logger.info(f"Added {len(documents)} documents to Pinecone")
-            return added_ids
-            
-        except Exception as e:
-            logger.error(f"Failed to add documents to Pinecone: {e}")
-            raise
-    
-    def similarity_search(self, query: str, k: int = 10, **kwargs) -> List[Document]:
-        """Perform similarity search"""
-        if not self.is_available:
-            return []
-        
-        try:
-            filter_dict = kwargs.get('filter')
-            results = self.vector_store.similarity_search(
-                query=query,
-                k=k,
-                filter=filter_dict
+            # Add to collection
+            self.collection.add(
+                ids=ids,
+                documents=texts,
+                metadatas=metadatas
             )
             
-            return results
+            logger.info(f"Successfully added {len(ids)} documents to vector store")
+            return True
             
         except Exception as e:
-            logger.error(f"Pinecone similarity search failed: {e}")
-            return []
+            logger.error(f"Failed to add documents to vector store: {e}")
+            return False
     
-    def similarity_search_with_score(self, query: str, k: int = 10, **kwargs) -> List[tuple]:
-        """Perform similarity search with scores"""
-        if not self.is_available:
-            return []
+    def search(self, query: str, n_results: int = None, filter_metadata: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """
+        Search for similar documents
         
-        try:
-            filter_dict = kwargs.get('filter')
-            results = self.vector_store.similarity_search_with_score(
-                query=query,
-                k=k,
-                filter=filter_dict
-            )
+        Args:
+            query: Search query text
+            n_results: Number of results to return
+            filter_metadata: Metadata filters to apply
             
-            return results
-            
-        except Exception as e:
-            logger.error(f"Pinecone similarity search with score failed: {e}")
-            return []
-
-class FAISSVectorStoreProvider(BaseVectorStoreProvider):
-    """FAISS vector store provider"""
-    
-    def _initialize(self):
-        try:
-            self.index_path = settings.FAISS_INDEX_PATH
-            self.index_dir = os.path.dirname(self.index_path)
-            os.makedirs(self.index_dir, exist_ok=True)
-            
-            # Try to load existing index
-            if os.path.exists(f"{self.index_path}.faiss"):
-                self.vector_store = FAISS.load_local(
-                    self.index_path,
-                    self.embedding_provider
-                )
-                logger.info(f"Loaded existing FAISS index from {self.index_path}")
-            else:
-                # Create empty vector store
-                self.vector_store = None
-                logger.info("FAISS will be initialized when first documents are added")
-            
-            self.is_available = True
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize FAISS: {e}")
-            self.is_available = False
-    
-    def add_documents(self, documents: List[Document], **kwargs) -> List[str]:
-        """Add documents to FAISS"""
-        if not self.is_available:
-            raise ValueError("FAISS not available")
-        
-        try:
-            if self.vector_store is None:
-                # Create new vector store with first documents
-                self.vector_store = FAISS.from_documents(
-                    documents,
-                    self.embedding_provider
-                )
-            else:
-                # Add to existing vector store
-                self.vector_store.add_documents(documents)
-            
-            # Save the index
-            self.vector_store.save_local(self.index_path)
-            
-            logger.info(f"Added {len(documents)} documents to FAISS")
-            return [f"faiss_{i}" for i in range(len(documents))]
-            
-        except Exception as e:
-            logger.error(f"Failed to add documents to FAISS: {e}")
-            raise
-    
-    def similarity_search(self, query: str, k: int = 10, **kwargs) -> List[Document]:
-        """Perform similarity search"""
-        if not self.is_available or self.vector_store is None:
+        Returns:
+            List of search results with documents and metadata
+        """
+        if not query or not query.strip():
+            logger.warning("Empty query provided")
             return []
         
         try:
-            results = self.vector_store.similarity_search(
-                query=query,
-                k=k
-            )
+            n_results = n_results or settings.MAX_RETRIEVAL_RESULTS
             
-            return results
-            
-        except Exception as e:
-            logger.error(f"FAISS similarity search failed: {e}")
-            return []
-    
-    def similarity_search_with_score(self, query: str, k: int = 10, **kwargs) -> List[tuple]:
-        """Perform similarity search with scores"""
-        if not self.is_available or self.vector_store is None:
-            return []
-        
-        try:
-            results = self.vector_store.similarity_search_with_score(
-                query=query,
-                k=k
-            )
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"FAISS similarity search with score failed: {e}")
-            return []
-
-class ModernVectorStore:
-    """
-    Modern vector store manager with multi-provider support
-    """
-    
-    def __init__(self):
-        self.embedding_manager = ModernEmbeddingManager()
-        self.providers = {}
-        self.current_provider = settings.VECTOR_STORE_TYPE
-        self._initialize_providers()
-    
-    def _initialize_providers(self):
-        """Initialize all available vector store providers"""
-        
-        # Get embedding provider
-        embedding_provider = self.embedding_manager.get_langchain_embeddings()
-        
-        if not embedding_provider:
-            logger.error("No embedding provider available")
-            return
-        
-        # Initialize ChromaDB (always available)
-        try:
-            chroma_provider = ChromaVectorStoreProvider(embedding_provider)
-            self.providers["chroma"] = chroma_provider
-        except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB provider: {e}")
-        
-        # Initialize Pinecone (if available)
-        if PINECONE_AVAILABLE and settings.PINECONE_API_KEY:
-            try:
-                pinecone_provider = PineconeVectorStoreProvider(embedding_provider)
-                self.providers["pinecone"] = pinecone_provider
-            except Exception as e:
-                logger.error(f"Failed to initialize Pinecone provider: {e}")
-        
-        # Initialize FAISS
-        try:
-            faiss_provider = FAISSVectorStoreProvider(embedding_provider)
-            self.providers["faiss"] = faiss_provider
-        except Exception as e:
-            logger.error(f"Failed to initialize FAISS provider: {e}")
-        
-        logger.info(f"Initialized vector store providers: {list(self.providers.keys())}")
-    
-    def get_provider(self, provider_name: str = None) -> Optional[BaseVectorStoreProvider]:
-        """Get vector store provider"""
-        provider_name = provider_name or self.current_provider
-        
-        if provider_name in self.providers:
-            provider = self.providers[provider_name]
-            if provider.is_available:
-                return provider
-            else:
-                logger.warning(f"Provider {provider_name} not available")
-        
-        # Fallback to any available provider
-        for name, provider in self.providers.items():
-            if provider.is_available:
-                logger.warning(f"Falling back to {name} vector store")
-                return provider
-        
-        logger.error("No vector store providers available")
-        return None
-    
-    def add_documents(self, 
-                     documents: List[Document], 
-                     provider: str = None,
-                     **kwargs) -> List[str]:
-        """Add documents to vector store"""
-        vector_provider = self.get_provider(provider)
-        if not vector_provider:
-            raise ValueError("No vector store provider available")
-        
-        return vector_provider.add_documents(documents, **kwargs)
-    
-    def search(self, 
-              query: str, 
-              n_results: int = 10,
-              filters: Dict[str, Any] = None,
-              provider: str = None) -> List[Dict[str, Any]]:
-        """Search vector store and return structured results"""
-        vector_provider = self.get_provider(provider)
-        if not vector_provider:
-            return []
-        
-        try:
-            # Perform similarity search with scores
-            results = vector_provider.similarity_search_with_score(
-                query=query,
-                k=n_results,
-                filter=filters
+            # Perform search
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                where=filter_metadata
             )
             
             # Format results
             formatted_results = []
-            for doc, score in results:
-                formatted_results.append({
-                    "content": doc.page_content,
-                    "metadata": doc.metadata,
-                    "similarity": float(1 - score) if score <= 1 else float(score),  # Normalize score
-                    "distance": float(score)
-                })
+            if results['documents'] and results['documents'][0]:
+                for i in range(len(results['documents'][0])):
+                    result = {
+                        'document': results['documents'][0][i],
+                        'metadata': results['metadatas'][0][i] if results['metadatas'] else {},
+                        'distance': results['distances'][0][i] if results['distances'] else 0.0,
+                        'id': results['ids'][0][i] if results['ids'] else None
+                    }
+                    formatted_results.append(result)
             
+            logger.info(f"Search returned {len(formatted_results)} results for query: {query[:50]}...")
             return formatted_results
             
         except Exception as e:
-            logger.error(f"Vector search failed: {e}")
+            logger.error(f"Search failed: {e}")
             return []
     
-    def similarity_search_with_score(self, 
-                                   query: str,
-                                   k: int = 10,
-                                   filter: Dict[str, Any] = None,
-                                   provider: str = None) -> List[tuple]:
-        """LangChain-compatible similarity search with score"""
-        vector_provider = self.get_provider(provider)
-        if not vector_provider:
-            return []
+    def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a specific document by ID
         
-        return vector_provider.similarity_search_with_score(
-            query=query,
-            k=k,
-            filter=filter
-        )
-    
-    def get_langchain_vectorstore(self, provider: str = None) -> Optional[VectorStore]:
-        """Get LangChain-compatible vector store"""
-        vector_provider = self.get_provider(provider)
-        if vector_provider:
-            return vector_provider.get_langchain_vectorstore()
-        return None
-    
-    def get_collection_stats(self) -> Dict[str, Any]:
-        """Get comprehensive statistics"""
-        stats = {
-            "current_provider": self.current_provider,
-            "available_providers": [
-                name for name, provider in self.providers.items() 
-                if provider.is_available
-            ],
-            "embedding_provider": self.embedding_manager.get_provider_info(),
-            "provider_details": {}
-        }
-        
-        for name, provider in self.providers.items():
-            stats["provider_details"][name] = provider.get_stats()
-        
-        # Get current provider stats
-        current_provider = self.get_provider()
-        if current_provider:
-            current_stats = current_provider.get_stats()
-            stats.update(current_stats)
-        
-        return stats
-    
-    def switch_provider(self, provider_name: str) -> bool:
-        """Switch to a different vector store provider"""
-        if provider_name in self.providers and self.providers[provider_name].is_available:
-            self.current_provider = provider_name
-            logger.info(f"Switched to {provider_name} vector store")
-            return True
-        else:
-            logger.error(f"Cannot switch to {provider_name} - not available")
-            return False
-    
-    def backup_data(self, backup_path: str, provider: str = None) -> bool:
-        """Backup vector store data"""
-        vector_provider = self.get_provider(provider)
-        if not vector_provider:
-            return False
-        
+        Args:
+            document_id: ID of the document to retrieve
+            
+        Returns:
+            Document data or None if not found
+        """
         try:
-            # For ChromaDB, backup the entire directory
-            if isinstance(vector_provider, ChromaVectorStoreProvider):
-                import shutil
-                shutil.copytree(
-                    vector_provider.persist_directory,
-                    backup_path,
-                    dirs_exist_ok=True
-                )
-                logger.info(f"ChromaDB backed up to {backup_path}")
-                return True
+            result = self.collection.get(ids=[document_id])
             
-            # For FAISS, copy the index files
-            elif isinstance(vector_provider, FAISSVectorStoreProvider):
-                import shutil
-                if os.path.exists(f"{vector_provider.index_path}.faiss"):
-                    shutil.copy(f"{vector_provider.index_path}.faiss", f"{backup_path}.faiss")
-                    shutil.copy(f"{vector_provider.index_path}.pkl", f"{backup_path}.pkl")
-                    logger.info(f"FAISS index backed up to {backup_path}")
-                    return True
+            if result['documents'] and result['documents'][0]:
+                return {
+                    'id': document_id,
+                    'document': result['documents'][0],
+                    'metadata': result['metadatas'][0] if result['metadatas'] else {}
+                }
+            else:
+                logger.warning(f"Document {document_id} not found")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to retrieve document {document_id}: {e}")
+            return None
+    
+    def update_document(self, document_id: str, text: str = None, metadata: Dict[str, Any] = None) -> bool:
+        """
+        Update an existing document
+        
+        Args:
+            document_id: ID of the document to update
+            text: New text content (optional)
+            metadata: New metadata (optional)
             
-            logger.warning(f"Backup not implemented for {type(vector_provider).__name__}")
-            return False
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            update_data = {}
+            
+            if text is not None:
+                update_data['documents'] = [text]
+            
+            if metadata is not None:
+                metadata['updated_at'] = datetime.now().isoformat()
+                update_data['metadatas'] = [metadata]
+            
+            if not update_data:
+                logger.warning("No update data provided")
+                return False
+            
+            self.collection.update(
+                ids=[document_id],
+                **update_data
+            )
+            
+            logger.info(f"Successfully updated document {document_id}")
+            return True
             
         except Exception as e:
-            logger.error(f"Backup failed: {e}")
+            logger.error(f"Failed to update document {document_id}: {e}")
             return False
+    
+    def delete_document(self, document_id: str) -> bool:
+        """
+        Delete a document from the vector store
+        
+        Args:
+            document_id: ID of the document to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.collection.delete(ids=[document_id])
+            logger.info(f"Successfully deleted document {document_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete document {document_id}: {e}")
+            return False
+    
+    def get_collection_stats(self) -> Dict[str, Any]:
+        """Get statistics about the collection"""
+        try:
+            count = self.collection.count()
+            
+            # Get sample metadata to understand structure
+            sample = self.collection.peek(limit=1)
+            metadata_keys = set()
+            if sample['metadatas']:
+                for metadata in sample['metadatas']:
+                    metadata_keys.update(metadata.keys())
+            
+            return {
+                'collection_name': self.collection_name,
+                'total_documents': count,
+                'persist_directory': self.persist_directory,
+                'embedding_dimensions': self.embedding_dimensions,
+                'metadata_keys': list(metadata_keys),
+                'last_updated': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get collection stats: {e}")
+            return {
+                'error': str(e),
+                'collection_name': self.collection_name
+            }
+    
+    def clear_collection(self) -> bool:
+        """Clear all documents from the collection"""
+        try:
+            self.collection.delete(where={})
+            logger.info("Successfully cleared collection")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to clear collection: {e}")
+            return False
+    
+    def export_collection(self, filepath: str) -> bool:
+        """Export collection data to a JSON file"""
+        try:
+            # Get all documents
+            results = self.collection.get()
+            
+            export_data = {
+                'collection_name': self.collection_name,
+                'export_date': datetime.now().isoformat(),
+                'documents': []
+            }
+            
+            if results['documents']:
+                for i in range(len(results['documents'])):
+                    doc_data = {
+                        'id': results['ids'][i],
+                        'text': results['documents'][i],
+                        'metadata': results['metadatas'][i] if results['metadatas'] else {}
+                    }
+                    export_data['documents'].append(doc_data)
+            
+            # Write to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Collection exported to {filepath}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to export collection: {e}")
+            return False
+
+class CustomEmbeddingFunction:
+    """Custom embedding function that uses our embedding service"""
+    
+    def __init__(self, embedding_service):
+        self.embedding_service = embedding_service
+    
+    def __call__(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a list of texts"""
+        if not self.embedding_service or not self.embedding_service.is_initialized():
+            logger.error("Embedding service not available")
+            return [[0.0] * self.embedding_service.dimensions] * len(texts)
+        
+        embeddings = []
+        for text in texts:
+            embedding = self.embedding_service.create_document_embedding(text)
+            if embedding:
+                embeddings.append(embedding)
+            else:
+                # Fallback to zero vector
+                embeddings.append([0.0] * self.embedding_service.dimensions)
+        
+        return embeddings
 
 # Global vector store instance
 try:
-    vector_store = ModernVectorStore()
-    logger.info("Modern vector store initialized successfully")
+    vector_store = VectorStore()
+    logger.info("Vector store initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize vector store: {e}")
     vector_store = None
+
+# Convenience functions
+def initialize_vector_store():
+    """Initialize and return the vector store"""
+    global vector_store
+    if vector_store is None:
+        try:
+            vector_store = VectorStore()
+            logger.info("Vector store initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize vector store: {e}")
+            return None
+    return vector_store
+
+def add_documents_to_store(documents: List[Dict[str, Any]]) -> bool:
+    """Add documents to the vector store"""
+    if vector_store:
+        return vector_store.add_documents(documents)
+    else:
+        logger.error("Vector store not initialized")
+        return False
+
+def search_documents(query: str, n_results: int = None) -> List[Dict[str, Any]]:
+    """Search for documents in the vector store"""
+    if vector_store:
+        return vector_store.search(query, n_results)
+    else:
+        logger.error("Vector store not initialized")
+        return []
